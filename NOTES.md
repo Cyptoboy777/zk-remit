@@ -79,3 +79,5 @@ Exact steps for the builder (≈15 min):
 - `vitest`: 12/12 ✅
 - Frontend `tsc --noEmit` ✅, `vite build` ✅ (≈42 MB dist incl. keys)
 - Headless Chrome E2E on the built site: issue → corridor → 2 sends → claim → double-claim rejected → ownership proof → view-key audit (2/2 matched) → 7 attacks all rejected with the expected circuit assertion; 0 console errors.
+- GitHub Actions (first push): CI ✅ (compactc 0.31.1 + 0.35.0 compile, 12/12 tests, frontend build) · Pages ✅
+- Live site https://cyptoboy777.github.io/zk-remit/ — same headless E2E passes; `/keys/*.prover|verifier` and `/zkir/*` served; the Midnight.js/Lace chunk loads in-browser without errors (Lace absent in headless Chrome, so the wallet path itself is untested).
