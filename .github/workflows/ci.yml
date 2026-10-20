@@ -1,0 +1,33 @@
+name: CI — compile Compact, test, build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compactc: ["0.31.1", "0.35.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install compactc ${{ matrix.compactc }}
+        run: |
+          ./scripts/install-compactc.sh ${{ matrix.compactc }}
+          echo "$HOME/.local/compactc-${{ matrix.compactc }}" >> "$GITHUB_PATH"
+      - name: Compile contract (with ZK keys)
+        run: compactc contract/src/zk-remit.compact contract/src/managed/zk-remit
+      - run: npm ci
+        if: matrix.compactc == '0.31.1'
+      - name: Unit tests (Compact runtime simulator)
+        if: matrix.compactc == '0.31.1'
+        run: npm test -w contract -- --reporter=verbose
+      - name: Typecheck + build frontend
+        if: matrix.compactc == '0.31.1'
+        run: npm run build -w frontend

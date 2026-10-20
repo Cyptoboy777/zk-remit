@@ -1,0 +1,260 @@
+// ZK Remit — compliant cross-border remittance receipts with zero-knowledge KYC.
+//
+// A licensed KYC attestor ("issuer") publishes only *commitments* to credentials
+// into an on-chain Merkle tree. A sender later proves, in zero knowledge, that:
+//   1. they hold a credential in the issuer's tree (membership, not identity),
+//   2. the credential has not expired for the current compliance epoch,
+//   3. their KYC country is the origin of an approved corridor,
+//   4. the transfer amount is within their tier's per-transfer cap, and
+//   5. they have not exceeded their tier's transfer count this epoch
+//      (rate-limiting nullifiers: one per (holder, epoch, slot)).
+// Only the corridor, an amount *band*, a nullifier and blinded tags are disclosed.
+// Name, document number, exact amount, tier and credential are never on chain.
+
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// ---------- Types ----------
+
+export struct Credential {
+  holderPk: Bytes<32>;     // hash of the holder's secret key (never the secret)
+  tier: Uint<8>;           // 1 = BASIC, 2 = VERIFIED, 3 = ENHANCED
+  country: Uint<16>;       // ISO-3166 numeric code of KYC residence
+  expiryEpoch: Uint<32>;   // last compliance epoch the credential is valid for
+  salt: Bytes<32>;         // blinding so the commitment cannot be brute-forced
+}
+
+export struct Receipt {
+  fromCountry: Uint<16>;
+  toCountry: Uint<16>;
+  amountBand: Uint<8>;     // 0: <=100, 1: <=500, 2: <=1000, 3: <=5000 (USD)
+  epoch: Uint<32>;
+  amountCommit: Bytes<32>; // commitment to the exact amount (opened only to recipient)
+  recipientTag: Bytes<32>; // hash of the recipient's secret claim key
+  viewTag: Bytes<32>;      // lets an auditor holding the sender's view key link receipts
+  claimed: Boolean;
+}
+
+// ---------- Public ledger ----------
+
+export ledger issuerPk: Bytes<32>;
+export ledger epoch: Counter;
+export ledger credentials: HistoricMerkleTree<16, Bytes<32>>;
+export ledger corridors: Set<Uint<32>>;
+export ledger nullifiers: Set<Bytes<32>>;
+export ledger receipts: Map<Bytes<32>, Receipt>;
+export ledger totalReceipts: Counter;
+export ledger bandVolume: Map<Uint<8>, Counter>;
+
+// ---------- Private inputs (witnesses) ----------
+
+witness issuerSecret(): Bytes<32>;
+witness holderSecret(): Bytes<32>;
+witness heldCredential(): Credential;
+witness credentialPath(commitment: Bytes<32>): MerkleTreePath<16, Bytes<32>>;
+witness recipientSecret(): Bytes<32>;
+
+constructor(issuer: Bytes<32>) {
+  issuerPk = disclose(issuer);
+  epoch.increment(1);
+  for (const b of [0, 1, 2, 3]) {
+    bandVolume.insert(b as Uint<8>, default<Counter>);
+  }
+}
+
+// ---------- Pure helpers (also callable off-chain from TypeScript) ----------
+
+export pure circuit derivePk(domain: Bytes<32>, sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([domain, sk]);
+}
+
+export pure circuit holderPublicKey(sk: Bytes<32>): Bytes<32> {
+  return derivePk(pad(32, "zkremit:holder:pk"), sk);
+}
+
+export pure circuit issuerPublicKey(sk: Bytes<32>): Bytes<32> {
+  return derivePk(pad(32, "zkremit:issuer:pk"), sk);
+}
+
+export pure circuit recipientTagOf(sk: Bytes<32>): Bytes<32> {
+  return derivePk(pad(32, "zkremit:recipient"), sk);
+}
+
+export pure circuit viewKeyOf(sk: Bytes<32>): Bytes<32> {
+  return derivePk(pad(32, "zkremit:viewkey"), sk);
+}
+
+export pure circuit credentialCommitment(c: Credential): Bytes<32> {
+  return persistentHash<Credential>(c);
+}
+
+export pure circuit corridorKey(fromCountry: Uint<16>, toCountry: Uint<16>): Uint<32> {
+  return (fromCountry as Uint<32>) * 65536 + (toCountry as Uint<32>) as Uint<32>;
+}
+
+export pure circuit tierCap(tier: Uint<8>): Uint<64> {
+  // Per-transfer cap in USD cents.
+  if (tier == 3) { return 500000; }
+  if (tier == 2) { return 100000; }
+  return 20000;
+}
+
+export pure circuit tierSlots(tier: Uint<8>): Uint<8> {
+  // Max transfers per compliance epoch.
+  if (tier == 3) { return 20; }
+  if (tier == 2) { return 8; }
+  return 3;
+}
+
+export pure circuit amountBandOf(amountCents: Uint<64>): Uint<8> {
+  if (amountCents <= 10000) { return 0; }
+  if (amountCents <= 50000) { return 1; }
+  if (amountCents <= 100000) { return 2; }
+  return 3;
+}
+
+export pure circuit nullifierOf(sk: Bytes<32>, ep: Uint<32>, slot: Uint<8>): Bytes<32> {
+  return persistentHash<Vector<4, Bytes<32>>>([
+    pad(32, "zkremit:nullifier"),
+    sk,
+    (ep as Field) as Bytes<32>,
+    (slot as Field) as Bytes<32>
+  ]);
+}
+
+export pure circuit viewTagOf(viewKey: Bytes<32>, nullifier: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "zkremit:viewtag"), viewKey, nullifier]);
+}
+
+// ---------- Issuer / operator circuits ----------
+
+circuit assertIssuer(): [] {
+  assert(issuerPublicKey(issuerSecret()) == issuerPk, "ZKR: caller is not the KYC issuer");
+}
+
+// Issuer publishes a credential commitment (no personal data ever touches the chain).
+export circuit issueCredential(commitment: Bytes<32>): [] {
+  assertIssuer();
+  credentials.insert(disclose(commitment));
+}
+
+// Issuer/operator approves a remittance corridor, e.g. UAE(784) -> India(356).
+export circuit openCorridor(fromCountry: Uint<16>, toCountry: Uint<16>): [] {
+  assertIssuer();
+  corridors.insert(corridorKey(disclose(fromCountry), disclose(toCountry)));
+}
+
+export circuit closeCorridor(fromCountry: Uint<16>, toCountry: Uint<16>): [] {
+  assertIssuer();
+  corridors.remove(corridorKey(disclose(fromCountry), disclose(toCountry)));
+}
+
+// Advances the compliance window (e.g. monthly). Expired credentials stop working,
+// and every holder gets a fresh set of unlinkable rate-limit nullifiers.
+export circuit advanceEpoch(): [] {
+  assertIssuer();
+  epoch.increment(1);
+}
+
+// ---------- Sender: private compliant send ----------
+
+export circuit sendRemittance(
+  toCountry: Uint<16>,
+  amountCents: Uint<64>,
+  amountSalt: Bytes<32>,
+  slot: Uint<8>,
+  recipientTag: Bytes<32>
+): Bytes<32> {
+  const sk = holderSecret();
+  const cred = heldCredential();
+
+  // (1) The credential belongs to this holder.
+  assert(cred.holderPk == holderPublicKey(sk), "ZKR: credential not bound to this holder");
+
+  // (2) The credential is in the issuer's tree — proven by Merkle path, root disclosed only.
+  const leaf = credentialCommitment(cred);
+  const path = credentialPath(leaf);
+  assert(path.leaf == leaf, "ZKR: merkle path does not match credential");
+  assert(credentials.checkRoot(disclose(merkleTreePathRoot<16, Bytes<32>>(path))),
+         "ZKR: credential not issued by the KYC attestor");
+
+  // (3) Not expired in the current compliance epoch.
+  const ep = epoch.read() as Uint<32>;
+  assert(cred.expiryEpoch >= ep, "ZKR: credential expired");
+
+  // (4) Corridor: the sender's KYC country is the disclosed origin of an approved corridor.
+  const fromCountry = disclose(cred.country);
+  const toC = disclose(toCountry);
+  assert(corridors.member(corridorKey(fromCountry, toC)), "ZKR: corridor not approved");
+
+  // (5) Amount within tier cap (tier and exact amount stay private).
+  assert(amountCents > 0, "ZKR: amount must be positive");
+  assert(amountCents <= tierCap(cred.tier), "ZKR: amount exceeds tier limit");
+
+  // (6) Rate limit: slot < tierSlots(tier); one nullifier per (holder, epoch, slot).
+  assert(slot < tierSlots(cred.tier), "ZKR: transfer quota for this epoch exhausted");
+  const nul = disclose(nullifierOf(sk, ep, slot));
+  assert(!nullifiers.member(nul), "ZKR: slot already used this epoch");
+  nullifiers.insert(nul);
+
+  // Selective disclosure: corridor + amount band are public; the rest is committed/blinded.
+  const band = disclose(amountBandOf(amountCents));
+  const receipt = Receipt {
+    fromCountry: fromCountry,
+    toCountry: toC,
+    amountBand: band,
+    epoch: ep,
+    amountCommit: disclose(persistentCommit<Uint<64>>(amountCents, amountSalt)),
+    recipientTag: disclose(recipientTag),
+    viewTag: disclose(viewTagOf(viewKeyOf(sk), nul)),
+    claimed: false
+  };
+  receipts.insert(nul, receipt);
+  totalReceipts.increment(1);
+  bandVolume.lookup(band).increment(1);
+  return nul;
+}
+
+// ---------- Recipient: claim payout without revealing identity ----------
+
+// The recipient proves they own the claim key behind recipientTag and that they know
+// the opening of the amount commitment; the payout partner learns the amount off-chain.
+export circuit claim(receiptId: Bytes<32>, amountCents: Uint<64>, amountSalt: Bytes<32>): [] {
+  const id = disclose(receiptId);
+  assert(receipts.member(id), "ZKR: unknown receipt");
+  const r = receipts.lookup(id);
+  assert(!r.claimed, "ZKR: receipt already claimed");
+  assert(recipientTagOf(recipientSecret()) == r.recipientTag, "ZKR: not the intended recipient");
+  assert(persistentCommit<Uint<64>>(amountCents, amountSalt) == r.amountCommit,
+         "ZKR: amount opening does not match commitment");
+  receipts.insert(id, Receipt {
+    fromCountry: r.fromCountry,
+    toCountry: r.toCountry,
+    amountBand: r.amountBand,
+    epoch: r.epoch,
+    amountCommit: r.amountCommit,
+    recipientTag: r.recipientTag,
+    viewTag: r.viewTag,
+    claimed: true
+  });
+}
+
+// ---------- Auditor: opt-in selective disclosure ----------
+
+// Mode A (single receipt): the sender proves to an auditor that a specific receipt is
+// theirs. Nothing about the sender (not even the view key) is revealed; the accepted
+// transaction itself is the proof, and it is bound to the auditor's challenge.
+export ledger ownershipProofs: Set<Bytes<32>>;
+
+export circuit proveReceiptOwnership(receiptId: Bytes<32>, auditorChallenge: Bytes<32>): [] {
+  const id = disclose(receiptId);
+  assert(receipts.member(id), "ZKR: unknown receipt");
+  const vk = viewKeyOf(holderSecret());
+  assert(viewTagOf(vk, id) == receipts.lookup(id).viewTag, "ZKR: receipt not sent by this holder");
+  ownershipProofs.insert(persistentHash<Vector<2, Bytes<32>>>([id, disclose(auditorChallenge)]));
+}
+
+// Mode B (full audit, off-chain): the sender hands their view key to a regulator, who
+// recomputes viewTagOf(viewKey, nullifier) for every receipt to list exactly that
+// sender's transfers — without gaining the ability to send or claim.

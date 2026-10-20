@@ -1,0 +1,9 @@
+ZK Remit
+Copyright 2026 Cyptoboy777 (AKINDO @Cryptoboy_777)
+
+Licensed under the Apache License, Version 2.0.
+
+Portions of the browser wallet/provider wiring (frontend/src/lib/midnightBackend.ts,
+frontend/src/lib/privateStateProvider.ts, frontend/vite.config.ts) are adapted from
+midnightntwrk/example-bboard, Copyright (C) Midnight Foundation, Apache-2.0.
+Built on Midnight (https://midnight.network) — Compact, Midnight.js, DApp Connector API.

@@ -1,0 +1,16 @@
+{
+  "name": "zk-remit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "ZK Remit — compliant cross-border remittances with zero-knowledge KYC on Midnight",
+  "license": "Apache-2.0",
+  "engines": { "node": ">=22" },
+  "workspaces": ["contract", "frontend"],
+  "scripts": {
+    "compact": "npm run compact -w contract",
+    "test": "npm test -w contract",
+    "build": "npm run build -w frontend",
+    "dev": "npm run dev -w frontend"
+  }
+}

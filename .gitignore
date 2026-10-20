@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.vite/
+frontend/.vite/
+contract/src/managed/
+*.log
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.DS_Store
