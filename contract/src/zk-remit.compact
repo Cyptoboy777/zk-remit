@@ -1,15 +1,11 @@
-// ZK Remit — compliant cross-border remittance receipts with zero-knowledge KYC.
+// ZK Remit Wave 3 — private, compliant remittances with shielded escrow on Midnight.
+// Apache-2.0. Newly developed / materially extended for Midnight WaveHack Wave 3.
 //
-// A licensed KYC attestor ("issuer") publishes only *commitments* to credentials
-// into an on-chain Merkle tree. A sender later proves, in zero knowledge, that:
-//   1. they hold a credential in the issuer's tree (membership, not identity),
-//   2. the credential has not expired for the current compliance epoch,
-//   3. their KYC country is the origin of an approved corridor,
-//   4. the transfer amount is within their tier's per-transfer cap, and
-//   5. they have not exceeded their tier's transfer count this epoch
-//      (rate-limiting nullifiers: one per (holder, epoch, slot)).
-// Only the corridor, an amount *band*, a nullifier and blinded tags are disclosed.
-// Name, document number, exact amount, tier and credential are never on chain.
+// A governor manages issuers and corridor policy. Licensed KYC issuers publish only
+// credential commitments. A sender proves eligibility in ZK and escrows a shielded
+// settlement coin. Only corridor, amount band, epoch, nullifier and blinded tags are
+// disclosed. Exact amount, identity, tier and issuer stay private.
+// Claim pays the shielded coin to the recipient; reclaim returns it after the window.
 
 pragma language_version >= 0.23;
 
@@ -18,52 +14,91 @@ import CompactStandardLibrary;
 // ---------- Types ----------
 
 export struct Credential {
-  holderPk: Bytes<32>;     // hash of the holder's secret key (never the secret)
-  tier: Uint<8>;           // 1 = BASIC, 2 = VERIFIED, 3 = ENHANCED
-  country: Uint<16>;       // ISO-3166 numeric code of KYC residence
-  expiryEpoch: Uint<32>;   // last compliance epoch the credential is valid for
-  salt: Bytes<32>;         // blinding so the commitment cannot be brute-forced
+  holderPk: Bytes<32>;
+  issuerPk: Bytes<32>;     // which issuer; stays private, proven against activeIssuers
+  tier: Uint<8>;           // 1 BASIC, 2 VERIFIED, 3 ENHANCED
+  country: Uint<16>;       // ISO-3166 numeric
+  expiryEpoch: Uint<32>;
+  salt: Bytes<32>;
+}
+
+export enum ReceiptStatus {
+  PENDING,
+  CLAIMED,
+  REFUNDED
+}
+
+export struct CorridorPolicy {
+  open: Boolean;
+  maxBand: Uint<8>;
+  capT1: Uint<64>;
+  capT2: Uint<64>;
+  capT3: Uint<64>;
+  slotsT1: Uint<8>;
+  slotsT2: Uint<8>;
+  slotsT3: Uint<8>;
+  claimWindow: Uint<32>;
 }
 
 export struct Receipt {
   fromCountry: Uint<16>;
   toCountry: Uint<16>;
-  amountBand: Uint<8>;     // 0: <=100, 1: <=500, 2: <=1000, 3: <=5000 (USD)
+  amountBand: Uint<8>;
   epoch: Uint<32>;
-  amountCommit: Bytes<32>; // commitment to the exact amount (opened only to recipient)
-  recipientTag: Bytes<32>; // hash of the recipient's secret claim key
-  viewTag: Bytes<32>;      // lets an auditor holding the sender's view key link receipts
-  claimed: Boolean;
+  escrowCommit: Bytes<32>;
+  recipientTag: Bytes<32>;
+  viewTag: Bytes<32>;
+  status: ReceiptStatus;
+}
+
+export struct EscrowOpening {
+  coin: QualifiedShieldedCoinInfo;
+  salt: Bytes<32>;
 }
 
 // ---------- Public ledger ----------
 
-export ledger issuerPk: Bytes<32>;
+export ledger governorPk: Bytes<32>;
+export ledger settlementColor: Bytes<32>;
+// Append-only issuer registry (Compact MerkleTree/HistoricMerkleTree insert returns void; no leaf overwrite).
+// Revocation is tracked in revokedIssuers and enforced at issue time (issuer identity is public on issue txs).
+// Which issuer attested a *credential* stays private at send time via Merkle membership of the credential leaf.
+export ledger activeIssuers: HistoricMerkleTree<4, Bytes<32>>;
+export ledger revokedIssuers: Set<Bytes<32>>;
+export ledger issuerCount: Counter;
+export ledger corridorPolicy: Map<Uint<32>, CorridorPolicy>;
 export ledger epoch: Counter;
 export ledger credentials: HistoricMerkleTree<16, Bytes<32>>;
-export ledger corridors: Set<Uint<32>>;
 export ledger nullifiers: Set<Bytes<32>>;
 export ledger receipts: Map<Bytes<32>, Receipt>;
 export ledger totalReceipts: Counter;
+export ledger claimedCount: Counter;
+export ledger refundedCount: Counter;
 export ledger bandVolume: Map<Uint<8>, Counter>;
+export ledger ownershipProofs: Set<Bytes<32>>;
 
-// ---------- Private inputs (witnesses) ----------
+// ---------- Witnesses ----------
 
+witness governorSecret(): Bytes<32>;
 witness issuerSecret(): Bytes<32>;
+witness issuerPath(pk: Bytes<32>): MerkleTreePath<4, Bytes<32>>;
 witness holderSecret(): Bytes<32>;
 witness heldCredential(): Credential;
 witness credentialPath(commitment: Bytes<32>): MerkleTreePath<16, Bytes<32>>;
 witness recipientSecret(): Bytes<32>;
+witness escrowSalt(): Bytes<32>;
+witness escrowOpening(receiptId: Bytes<32>): EscrowOpening;
 
-constructor(issuer: Bytes<32>) {
-  issuerPk = disclose(issuer);
+constructor(governor: Bytes<32>, color: Bytes<32>) {
+  governorPk = disclose(governor);
+  settlementColor = disclose(color);
   epoch.increment(1);
   for (const b of [0, 1, 2, 3]) {
     bandVolume.insert(b as Uint<8>, default<Counter>);
   }
 }
 
-// ---------- Pure helpers (also callable off-chain from TypeScript) ----------
+// ---------- Pure helpers ----------
 
 export pure circuit derivePk(domain: Bytes<32>, sk: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>([domain, sk]);
@@ -75,6 +110,10 @@ export pure circuit holderPublicKey(sk: Bytes<32>): Bytes<32> {
 
 export pure circuit issuerPublicKey(sk: Bytes<32>): Bytes<32> {
   return derivePk(pad(32, "zkremit:issuer:pk"), sk);
+}
+
+export pure circuit governorPublicKey(sk: Bytes<32>): Bytes<32> {
+  return derivePk(pad(32, "zkremit:governor:pk"), sk);
 }
 
 export pure circuit recipientTagOf(sk: Bytes<32>): Bytes<32> {
@@ -91,20 +130,6 @@ export pure circuit credentialCommitment(c: Credential): Bytes<32> {
 
 export pure circuit corridorKey(fromCountry: Uint<16>, toCountry: Uint<16>): Uint<32> {
   return (fromCountry as Uint<32>) * 65536 + (toCountry as Uint<32>) as Uint<32>;
-}
-
-export pure circuit tierCap(tier: Uint<8>): Uint<64> {
-  // Per-transfer cap in USD cents.
-  if (tier == 3) { return 500000; }
-  if (tier == 2) { return 100000; }
-  return 20000;
-}
-
-export pure circuit tierSlots(tier: Uint<8>): Uint<8> {
-  // Max transfers per compliance epoch.
-  if (tier == 3) { return 20; }
-  if (tier == 2) { return 8; }
-  return 3;
 }
 
 export pure circuit amountBandOf(amountCents: Uint<64>): Uint<8> {
@@ -127,125 +152,245 @@ export pure circuit viewTagOf(viewKey: Bytes<32>, nullifier: Bytes<32>): Bytes<3
   return persistentHash<Vector<3, Bytes<32>>>([pad(32, "zkremit:viewtag"), viewKey, nullifier]);
 }
 
-// ---------- Issuer / operator circuits ----------
-
-circuit assertIssuer(): [] {
-  assert(issuerPublicKey(issuerSecret()) == issuerPk, "ZKR: caller is not the KYC issuer");
+export pure circuit escrowCommitOf(coin: QualifiedShieldedCoinInfo, salt: Bytes<32>): Bytes<32> {
+  return persistentCommit<Vector<3, Bytes<32>>>(
+    [coin.nonce, coin.color, coin.value as Bytes<32>],
+    salt
+  );
 }
 
-// Issuer publishes a credential commitment (no personal data ever touches the chain).
+export pure circuit capOf(pol: CorridorPolicy, tier: Uint<8>): Uint<64> {
+  if (tier == 3) { return pol.capT3; }
+  if (tier == 2) { return pol.capT2; }
+  return pol.capT1;
+}
+
+export pure circuit slotsOf(pol: CorridorPolicy, tier: Uint<8>): Uint<8> {
+  if (tier == 3) { return pol.slotsT3; }
+  if (tier == 2) { return pol.slotsT2; }
+  return pol.slotsT1;
+}
+
+export pure circuit defaultPolicy(): CorridorPolicy {
+  return CorridorPolicy {
+    open: true,
+    maxBand: 3,
+    capT1: 20000,
+    capT2: 100000,
+    capT3: 500000,
+    slotsT1: 3,
+    slotsT2: 8,
+    slotsT3: 20,
+    claimWindow: 2
+  };
+}
+
+// ---------- Auth helpers ----------
+
+circuit assertGovernor(): [] {
+  assert(governorPublicKey(governorSecret()) == governorPk, "ZKR: caller is not the governor");
+}
+
+// ---------- Governor / issuer / policy ----------
+
+export circuit addIssuer(pk: Bytes<32>): [] {
+  assertGovernor();
+  const pub = disclose(pk);
+  activeIssuers.insert(pub);
+  issuerCount.increment(1);
+}
+
+export circuit revokeIssuer(pk: Bytes<32>): [] {
+  assertGovernor();
+  revokedIssuers.insert(disclose(pk));
+}
+
 export circuit issueCredential(commitment: Bytes<32>): [] {
-  assertIssuer();
+  const sk = issuerSecret();
+  const ipk = issuerPublicKey(sk);
+  const path = issuerPath(ipk);
+  assert(path.leaf == ipk, "ZKR: issuer path does not match");
+  assert(activeIssuers.checkRoot(disclose(merkleTreePathRoot<4, Bytes<32>>(path))),
+         "ZKR: caller is not an active issuer");
+  // Issuer identity is disclosed only on the issue tx (licensed MTO). Send path keeps it private.
+  assert(!revokedIssuers.member(disclose(ipk)), "ZKR: credential issuer is not active");
   credentials.insert(disclose(commitment));
 }
 
-// Issuer/operator approves a remittance corridor, e.g. UAE(784) -> India(356).
-export circuit openCorridor(fromCountry: Uint<16>, toCountry: Uint<16>): [] {
-  assertIssuer();
-  corridors.insert(corridorKey(disclose(fromCountry), disclose(toCountry)));
+export circuit setCorridorPolicy(fromCountry: Uint<16>, toCountry: Uint<16>, policy: CorridorPolicy): [] {
+  assertGovernor();
+  const key = corridorKey(disclose(fromCountry), disclose(toCountry));
+  corridorPolicy.insert(key, disclose(policy));
 }
 
 export circuit closeCorridor(fromCountry: Uint<16>, toCountry: Uint<16>): [] {
-  assertIssuer();
-  corridors.remove(corridorKey(disclose(fromCountry), disclose(toCountry)));
+  assertGovernor();
+  const key = corridorKey(disclose(fromCountry), disclose(toCountry));
+  assert(corridorPolicy.member(key), "ZKR: corridor not approved");
+  const pol = corridorPolicy.lookup(key);
+  corridorPolicy.insert(key, CorridorPolicy {
+    open: false,
+    maxBand: pol.maxBand,
+    capT1: pol.capT1, capT2: pol.capT2, capT3: pol.capT3,
+    slotsT1: pol.slotsT1, slotsT2: pol.slotsT2, slotsT3: pol.slotsT3,
+    claimWindow: pol.claimWindow
+  });
 }
 
-// Advances the compliance window (e.g. monthly). Expired credentials stop working,
-// and every holder gets a fresh set of unlinkable rate-limit nullifiers.
 export circuit advanceEpoch(): [] {
-  assertIssuer();
+  assertGovernor();
   epoch.increment(1);
 }
 
-// ---------- Sender: private compliant send ----------
+// ---------- Send: compliance + shielded escrow ----------
 
 export circuit sendRemittance(
   toCountry: Uint<16>,
-  amountCents: Uint<64>,
-  amountSalt: Bytes<32>,
   slot: Uint<8>,
-  recipientTag: Bytes<32>
+  recipientTag: Bytes<32>,
+  coin: ShieldedCoinInfo
 ): Bytes<32> {
   const sk = holderSecret();
   const cred = heldCredential();
 
-  // (1) The credential belongs to this holder.
   assert(cred.holderPk == holderPublicKey(sk), "ZKR: credential not bound to this holder");
 
-  // (2) The credential is in the issuer's tree — proven by Merkle path, root disclosed only.
   const leaf = credentialCommitment(cred);
   const path = credentialPath(leaf);
   assert(path.leaf == leaf, "ZKR: merkle path does not match credential");
   assert(credentials.checkRoot(disclose(merkleTreePathRoot<16, Bytes<32>>(path))),
          "ZKR: credential not issued by the KYC attestor");
 
-  // (3) Not expired in the current compliance epoch.
+  const ip = issuerPath(cred.issuerPk);
+  assert(ip.leaf == cred.issuerPk, "ZKR: issuer path does not match credential");
+  assert(activeIssuers.checkRoot(disclose(merkleTreePathRoot<4, Bytes<32>>(ip))),
+         "ZKR: credential issuer is not active");
+
   const ep = epoch.read() as Uint<32>;
   assert(cred.expiryEpoch >= ep, "ZKR: credential expired");
 
-  // (4) Corridor: the sender's KYC country is the disclosed origin of an approved corridor.
-  const fromCountry = disclose(cred.country);
+  const fromC = disclose(cred.country);
   const toC = disclose(toCountry);
-  assert(corridors.member(corridorKey(fromCountry, toC)), "ZKR: corridor not approved");
+  const key = corridorKey(fromC, toC);
+  assert(corridorPolicy.member(key), "ZKR: corridor not approved");
+  const pol = corridorPolicy.lookup(key);
+  assert(pol.open, "ZKR: corridor not approved");
 
-  // (5) Amount within tier cap (tier and exact amount stay private).
-  assert(amountCents > 0, "ZKR: amount must be positive");
-  assert(amountCents <= tierCap(cred.tier), "ZKR: amount exceeds tier limit");
+  assert(coin.color == settlementColor, "ZKR: wrong settlement token");
+  assert(coin.value > 0, "ZKR: amount must be positive");
+  assert(coin.value <= capOf(pol, cred.tier) as Uint<128>, "ZKR: amount exceeds tier limit");
+  const amountCents = coin.value as Uint<64>;
+  const band = disclose(amountBandOf(amountCents));
+  assert(band <= pol.maxBand, "ZKR: amount band not allowed on this corridor");
 
-  // (6) Rate limit: slot < tierSlots(tier); one nullifier per (holder, epoch, slot).
-  assert(slot < tierSlots(cred.tier), "ZKR: transfer quota for this epoch exhausted");
+  assert(slot < slotsOf(pol, cred.tier), "ZKR: transfer quota for this epoch exhausted");
   const nul = disclose(nullifierOf(sk, ep, slot));
   assert(!nullifiers.member(nul), "ZKR: slot already used this epoch");
   nullifiers.insert(nul);
 
-  // Selective disclosure: corridor + amount band are public; the rest is committed/blinded.
-  const band = disclose(amountBandOf(amountCents));
-  const receipt = Receipt {
-    fromCountry: fromCountry,
+  // Shielded escrow: custody without publishing the coin nonce.
+  receiveShielded(disclose(coin));
+  const q = QualifiedShieldedCoinInfo {
+    nonce: coin.nonce,
+    color: coin.color,
+    value: coin.value,
+    mt_index: 0 as Uint<64>
+  };
+  const salt = escrowSalt();
+  receipts.insert(nul, Receipt {
+    fromCountry: fromC,
     toCountry: toC,
     amountBand: band,
     epoch: ep,
-    amountCommit: disclose(persistentCommit<Uint<64>>(amountCents, amountSalt)),
+    escrowCommit: disclose(escrowCommitOf(q, salt)),
     recipientTag: disclose(recipientTag),
     viewTag: disclose(viewTagOf(viewKeyOf(sk), nul)),
-    claimed: false
-  };
-  receipts.insert(nul, receipt);
+    status: ReceiptStatus.PENDING
+  });
   totalReceipts.increment(1);
   bandVolume.lookup(band).increment(1);
   return nul;
 }
 
-// ---------- Recipient: claim payout without revealing identity ----------
+// ---------- Claim / reclaim ----------
 
-// The recipient proves they own the claim key behind recipientTag and that they know
-// the opening of the amount commitment; the payout partner learns the amount off-chain.
-export circuit claim(receiptId: Bytes<32>, amountCents: Uint<64>, amountSalt: Bytes<32>): [] {
+export circuit claim(receiptId: Bytes<32>): [] {
   const id = disclose(receiptId);
   assert(receipts.member(id), "ZKR: unknown receipt");
   const r = receipts.lookup(id);
-  assert(!r.claimed, "ZKR: receipt already claimed");
+  assert(r.status == ReceiptStatus.PENDING, "ZKR: receipt already claimed");
   assert(recipientTagOf(recipientSecret()) == r.recipientTag, "ZKR: not the intended recipient");
-  assert(persistentCommit<Uint<64>>(amountCents, amountSalt) == r.amountCommit,
-         "ZKR: amount opening does not match commitment");
+
+  const o = escrowOpening(id);
+  const q0 = QualifiedShieldedCoinInfo {
+    nonce: o.coin.nonce,
+    color: o.coin.color,
+    value: o.coin.value,
+    mt_index: 0 as Uint<64>
+  };
+  assert(escrowCommitOf(q0, o.salt) == r.escrowCommit, "ZKR: escrow opening does not match");
+
+  sendShielded(
+    disclose(o.coin),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    disclose(o.coin.value)
+  );
+
   receipts.insert(id, Receipt {
     fromCountry: r.fromCountry,
     toCountry: r.toCountry,
     amountBand: r.amountBand,
     epoch: r.epoch,
-    amountCommit: r.amountCommit,
+    escrowCommit: r.escrowCommit,
     recipientTag: r.recipientTag,
     viewTag: r.viewTag,
-    claimed: true
+    status: ReceiptStatus.CLAIMED
   });
+  claimedCount.increment(1);
 }
 
-// ---------- Auditor: opt-in selective disclosure ----------
+export circuit reclaim(receiptId: Bytes<32>): [] {
+  const id = disclose(receiptId);
+  assert(receipts.member(id), "ZKR: unknown receipt");
+  const r = receipts.lookup(id);
+  assert(r.status == ReceiptStatus.PENDING, "ZKR: receipt already claimed");
 
-// Mode A (single receipt): the sender proves to an auditor that a specific receipt is
-// theirs. Nothing about the sender (not even the view key) is revealed; the accepted
-// transaction itself is the proof, and it is bound to the auditor's challenge.
-export ledger ownershipProofs: Set<Bytes<32>>;
+  const sk = holderSecret();
+  assert(viewTagOf(viewKeyOf(sk), id) == r.viewTag, "ZKR: not the sender of this receipt");
+
+  const key = corridorKey(r.fromCountry, r.toCountry);
+  assert(corridorPolicy.member(key), "ZKR: corridor not approved");
+  const pol = corridorPolicy.lookup(key);
+  const now = epoch.read() as Uint<32>;
+  assert(now >= r.epoch + pol.claimWindow, "ZKR: claim window still open");
+
+  const o = escrowOpening(id);
+  const q0 = QualifiedShieldedCoinInfo {
+    nonce: o.coin.nonce,
+    color: o.coin.color,
+    value: o.coin.value,
+    mt_index: 0 as Uint<64>
+  };
+  assert(escrowCommitOf(q0, o.salt) == r.escrowCommit, "ZKR: escrow opening does not match");
+
+  sendShielded(
+    disclose(o.coin),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey()),
+    disclose(o.coin.value)
+  );
+
+  receipts.insert(id, Receipt {
+    fromCountry: r.fromCountry,
+    toCountry: r.toCountry,
+    amountBand: r.amountBand,
+    epoch: r.epoch,
+    escrowCommit: r.escrowCommit,
+    recipientTag: r.recipientTag,
+    viewTag: r.viewTag,
+    status: ReceiptStatus.REFUNDED
+  });
+  refundedCount.increment(1);
+}
 
 export circuit proveReceiptOwnership(receiptId: Bytes<32>, auditorChallenge: Bytes<32>): [] {
   const id = disclose(receiptId);
@@ -254,7 +399,3 @@ export circuit proveReceiptOwnership(receiptId: Bytes<32>, auditorChallenge: Byt
   assert(viewTagOf(vk, id) == receipts.lookup(id).viewTag, "ZKR: receipt not sent by this holder");
   ownershipProofs.insert(persistentHash<Vector<2, Bytes<32>>>([id, disclose(auditorChallenge)]));
 }
-
-// Mode B (full audit, off-chain): the sender hands their view key to a regulator, who
-// recomputes viewTagOf(viewKey, nullifier) for every receipt to list exactly that
-// sender's transfers — without gaining the ability to send or claim.

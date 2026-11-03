@@ -20,13 +20,17 @@
     "@midnight-ntwrk/midnight-js-network-id": "4.1.1",
     "@midnight-ntwrk/midnight-js-protocol": "4.1.1",
     "@midnight-ntwrk/midnight-js-types": "4.1.1",
+    "@types/three": "^0.187.0",
     "@zk-remit/contract": "0.1.0",
     "buffer": "^6.0.3",
+    "qrcode": "^1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "semver": "^7.8.4"
+    "semver": "^7.8.4",
+    "three": "^0.187.0"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/semver": "^7.7.1",

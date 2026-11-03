@@ -1,7 +1,5 @@
 import type { Ledger, ZkRemitPrivateState } from '@zk-remit/contract';
-import { toHex } from '@zk-remit/contract';
-
-export type Persona = 'issuer' | 'sender' | 'recipient' | 'mallory';
+import { toHex, ReceiptStatus } from '@zk-remit/contract';
 
 export type ReceiptView = {
   id: string;
@@ -9,33 +7,47 @@ export type ReceiptView = {
   toCountry: bigint;
   amountBand: bigint;
   epoch: bigint;
-  amountCommit: string;
+  escrowCommit: string;
   recipientTag: string;
   viewTag: string;
-  claimed: boolean;
+  status: ReceiptStatus;
 };
 
 export type LedgerSnapshot = {
-  issuerPk: string;
+  governorPk: string;
+  settlementColor: string;
   epoch: bigint;
-  corridors: [bigint, bigint][];
+  issuerCount: bigint;
+  corridors: { from: bigint; to: bigint; open: boolean; maxBand: bigint; claimWindow: bigint }[];
   credentialsIssued: bigint;
   root: string;
   nullifiers: bigint;
   totalReceipts: bigint;
+  claimedCount: bigint;
+  refundedCount: bigint;
   bandVolume: bigint[];
   receipts: ReceiptView[];
   ownershipProofs: bigint;
 };
 
 export const snapshot = (l: Ledger): LedgerSnapshot => ({
-  issuerPk: toHex(l.issuerPk),
+  governorPk: toHex(l.governorPk),
+  settlementColor: toHex(l.settlementColor),
   epoch: l.epoch,
-  corridors: [...l.corridors].map((k) => [k >> 16n, k & 0xffffn] as [bigint, bigint]),
+  issuerCount: l.issuerCount,
+  corridors: [...l.corridorPolicy].map(([k, p]) => ({
+    from: k >> 16n,
+    to: k & 0xffffn,
+    open: p.open,
+    maxBand: p.maxBand,
+    claimWindow: p.claimWindow,
+  })),
   credentialsIssued: l.credentials.firstFree(),
   root: l.credentials.root().field.toString(16).padStart(64, '0'),
   nullifiers: l.nullifiers.size(),
   totalReceipts: l.totalReceipts,
+  claimedCount: l.claimedCount,
+  refundedCount: l.refundedCount,
   bandVolume: [0n, 1n, 2n, 3n].map((b) => (l.bandVolume.member(b) ? l.bandVolume.lookup(b).read() : 0n)),
   receipts: [...l.receipts].map(([id, r]) => ({
     id: toHex(id),
@@ -43,31 +55,42 @@ export const snapshot = (l: Ledger): LedgerSnapshot => ({
     toCountry: r.toCountry,
     amountBand: r.amountBand,
     epoch: r.epoch,
-    amountCommit: toHex(r.amountCommit),
+    escrowCommit: toHex(r.escrowCommit),
     recipientTag: toHex(r.recipientTag),
     viewTag: toHex(r.viewTag),
-    claimed: r.claimed,
+    status: r.status,
   })),
   ownershipProofs: l.ownershipProofs.size(),
 });
 
-/** A backend executes ZK Remit circuits as a given persona (private state). */
+export type ShieldedCoin = { nonce: Uint8Array; color: Uint8Array; value: bigint };
+
 export interface Backend {
   readonly kind: 'simulator' | 'midnight';
   readonly label: string;
   readonly contractAddress?: string;
+  addIssuer(as: ZkRemitPrivateState, pk: Uint8Array): Promise<void>;
   issueCredential(as: ZkRemitPrivateState, commitment: Uint8Array): Promise<void>;
-  openCorridor(as: ZkRemitPrivateState, from: bigint, to: bigint): Promise<void>;
+  setCorridorPolicy(
+    as: ZkRemitPrivateState,
+    from: bigint,
+    to: bigint,
+    policy?: Parameters<import('@zk-remit/contract').ZkRemitSimulator['setCorridorPolicy']>[2],
+  ): Promise<void>;
   advanceEpoch(as: ZkRemitPrivateState): Promise<void>;
   sendRemittance(
     as: ZkRemitPrivateState,
     to: bigint,
-    amountCents: bigint,
-    salt: Uint8Array,
     slot: bigint,
     recipientTag: Uint8Array,
-  ): Promise<{ txHash?: string }>;
-  claim(as: ZkRemitPrivateState, receiptId: Uint8Array, amountCents: bigint, salt: Uint8Array): Promise<{ txHash?: string }>;
+    coin: ShieldedCoin,
+    escrowSalt?: Uint8Array,
+  ): Promise<{ receiptId: Uint8Array; txHash?: string }>;
+  claim(as: ZkRemitPrivateState, receiptId: Uint8Array): Promise<{ txHash?: string }>;
+  reclaim(as: ZkRemitPrivateState, receiptId: Uint8Array): Promise<{ txHash?: string }>;
   proveReceiptOwnership(as: ZkRemitPrivateState, receiptId: Uint8Array, challenge: Uint8Array): Promise<{ txHash?: string }>;
   ledger(): Promise<LedgerSnapshot>;
+  /** Simulator-only: access private escrows for claim-link demos. */
+  getEscrow?(receiptId: Uint8Array): { coin: ShieldedCoin & { mt_index: bigint }; salt: Uint8Array } | undefined;
+  withEscrow?(as: ZkRemitPrivateState, receiptId: Uint8Array, opening: { coin: ShieldedCoin & { mt_index: bigint }; salt: Uint8Array }): void;
 }

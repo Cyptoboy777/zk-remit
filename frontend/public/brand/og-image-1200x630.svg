@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0B1220"/>
+  <rect x="0" y="0" width="24" height="630" fill="#F25C36"/>
+  <text x="80" y="280" fill="#E8EDF4" font-family="Arial,sans-serif" font-size="72" font-weight="700">ZK Remit</text>
+  <text x="80" y="360" fill="#A3B0C5" font-family="Arial,sans-serif" font-size="32">Send value. Prove compliance. Reveal nothing else.</text>
+  <text x="80" y="520" fill="#8592AA" font-family="Arial,sans-serif" font-size="22">Midnight Network · WaveHack Wave 3</text>
+</svg>
