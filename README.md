@@ -12,7 +12,7 @@ the corridor’s claim window.
 - **Live demo (GitHub Pages):** https://cyptoboy777.github.io/zk-remit/
 - **Contract:** [`contract/src/zk-remit.compact`](contract/src/zk-remit.compact)
 - **Tests:** `npm test -w contract` (Compact runtime simulator)
-- **Privacy Simulator:** in-app **Privacy Simulator** page (model-driven 3D / 2D fallback)
+- **Privacy Simulator:** original in-app tour — shielded vs disclosed language, proof-bloom moment, cinematic camera, 60fps quality tiers, reduced-motion / WebGL 2D fallback, **EN/ES/PT/ZH/FR** (model-driven; not a teardown clone)
 - **Baseline tag:** `wave2-baseline` · **Wave 3 branch:** `wave3`
 - **Compare:** https://github.com/Cyptoboy777/zk-remit/compare/wave2-baseline...wave3
 
@@ -25,7 +25,7 @@ the corridor’s claim window.
 | Corridors | Boolean open/close | On-chain **`CorridorPolicy`** (caps, slots, max band, claim window) |
 | Issuers | Single issuer = admin | **Multi-issuer** tree + revoke-at-issue |
 | Claim UX | Manual amount opening | **Claim link / QR** carrying escrow opening |
-| Privacy UX | — | **“What will be revealed”** preview + **anonymity-set** meter |
+| Privacy UX | — | **“What will be revealed”** preview + **anonymity-set** meter + **Privacy Simulator** |
 | UI | Basic tabs | Premium global UI · **EN / ES / PT / ZH / FR** |
 | Networks | Simulator | Simulator live · Preview address **not set until user deploys** (never faked) |
 
