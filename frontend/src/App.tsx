@@ -217,9 +217,6 @@ export default function App() {
   return (
     <div className="app">
       <a className="skip" href="#main">Skip to content</a>
-      {!CONFIGURED_ADDRESS && (
-        <div className="banner" role="status">{t(locale, 'testnet_banner')}</div>
-      )}
       <header className="top">
         <div className="brand" onClick={() => setTab('home')} role="button" tabIndex={0}>
           <img src={`${import.meta.env.BASE_URL}brand/logo-mark-mono-white.svg`} alt="" width={36} height={36} />
@@ -236,6 +233,9 @@ export default function App() {
           ))}
         </nav>
         <div className="top-actions">
+          {!CONFIGURED_ADDRESS && (
+            <span className="pill demo" role="status">{t(locale, 'testnet_banner')}</span>
+          )}
           <label className="lang">
             <span className="sr">{t(locale, 'lang')}</span>
             <select value={locale} onChange={(e) => setLocale(e.target.value as Locale)} aria-label={t(locale, 'lang')}>
@@ -244,12 +244,15 @@ export default function App() {
               ))}
             </select>
           </label>
-          <span className={`pill ${backend.kind}`}>{backend.kind === 'simulator' ? t(locale, 'mode_sim') : t(locale, 'mode_network')}</span>
+          {CONFIGURED_ADDRESS && (
+            <span className={`pill ${backend.kind}`}>{backend.kind === 'simulator' ? t(locale, 'mode_sim') : t(locale, 'mode_network')}</span>
+          )}
           <button type="button" className="btn ghost" onClick={resetSim}>Reset</button>
         </div>
       </header>
 
       <main id="main" className="main">
+        <div className="stage" key={tab}>
         {tab === 'home' && (
           <section className="hero-panel">
             <div className="hero-copy">
@@ -271,15 +274,23 @@ export default function App() {
                 ))}
               </ul>
             </div>
-            <div className="envelope" aria-hidden>
-              <div className="env-out">
-                <span>Outside</span>
+            <div className="compare" aria-hidden>
+              <article className="compare-card outside">
+                <span className="compare-kicker">Outside</span>
                 <p>AE → PH · {BAND_LABELS[1]} · epoch 1</p>
-              </div>
-              <div className="env-in">
-                <span>Sealed</span>
-                <p>$███.██ · name · tier · issuer</p>
-              </div>
+              </article>
+              <article className="compare-card sealed">
+                <span className="compare-kicker">Sealed</span>
+                <p>
+                  <span className="redact" title="Hidden">$420.00</span>
+                  {' · '}
+                  <span className="redact" title="Hidden">name</span>
+                  {' · '}
+                  <span className="redact" title="Hidden">tier</span>
+                  {' · '}
+                  <span className="redact" title="Hidden">issuer</span>
+                </p>
+              </article>
             </div>
           </section>
         )}
@@ -407,6 +418,7 @@ export default function App() {
           </section>
         )}
 
+        </div>
         <aside className="log card" aria-live="polite">
           <h3>Activity</h3>
           {log.length === 0 && <p className="muted">Actions appear here.</p>}
