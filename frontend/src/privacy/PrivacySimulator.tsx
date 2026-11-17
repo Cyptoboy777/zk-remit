@@ -51,6 +51,21 @@ export default function PrivacySimulator({ locale, onBack }: Props) {
   const [quality, setQuality] = useState<Quality>('high');
   const model = useMemo(() => simulate(tProg, br), [tProg, br]);
   const use3d = webglOk && !reduced && !force2d;
+  const idOpen = br.revealIdentity || model.privateLeak.includes('senderIdentity');
+  const amtOpen = br.revealExactAmount || model.privateLeak.includes('exactAmount');
+  const privacyScore = Math.max(
+    0,
+    Math.min(
+      100,
+      100
+        - (idOpen ? 30 : 0)
+        - (amtOpen ? 25 : 0)
+        - (br.corridorClosed ? 10 : 0)
+        - (model.anonymity.degraded ? 15 : 0)
+        - Math.max(0, 8 - Math.min(8, model.anonymity.k)) * 3
+        - model.privateLeak.length * 6,
+    ),
+  );
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -498,13 +513,10 @@ export default function PrivacySimulator({ locale, onBack }: Props) {
   return (
     <div className="psim" onPointerDown={touch}>
       <header className="psim-top">
-        <button type="button" className="btn ghost" onClick={onBack}>
-          ← {t(locale, 'nav_home')}
-        </button>
         <div className="psim-title">
-          <p className="eyebrow">{t(locale, 'sim_eyebrow')}</p>
-          <h2>{t(locale, 'nav_sim')}</h2>
-          <p className="muted">{t(locale, 'sim_sub')}</p>
+          <p className="eyebrow">Privacy Simulator</p>
+          <h2>See what the chain can’t.</h2>
+          <p className="muted">Explore how each disclosure changes the public view. Values come from the labelled {model.example.from}→{model.example.to} walkthrough.</p>
         </div>
         <div className="psim-status" style={{ borderColor: model.accent }}>
           <span className="psim-status-dot" style={{ background: model.accent }} />
@@ -512,6 +524,62 @@ export default function PrivacySimulator({ locale, onBack }: Props) {
           <span className={`pill tone-${statusTone}`}>{model.status}</span>
         </div>
       </header>
+
+      <div className="psim-trio">
+        <section className="meter-card">
+          <h3>Privacy meter</h3>
+          <p className="meter-score">{privacyScore} <small>/ 100</small></p>
+          <div className="meter-bar" aria-hidden><i style={{ width: `${privacyScore}%` }} /></div>
+          <p className="eyebrow" style={{ color: '#c4cfdb' }}>Public disclosures</p>
+          <div className="meter-rows">
+            <div>Corridor <span className="pill">On</span></div>
+            <div>Amount band <span className="pill">On</span></div>
+            <div>Epoch <span className="pill">On</span></div>
+            <div>
+              Identity
+              <button type="button" className={idOpen ? 'pill' : 'pill tone-warn'} onClick={() => { touch(); setBr({ ...br, revealIdentity: !br.revealIdentity }); }}>
+                {idOpen ? 'On' : 'Off'}
+              </button>
+            </div>
+            <div>
+              Exact amount
+              <button type="button" className={amtOpen ? 'pill' : 'pill tone-warn'} onClick={() => { touch(); setBr({ ...br, revealExactAmount: !br.revealExactAmount }); }}>
+                {amtOpen ? 'On' : 'Off'}
+              </button>
+            </div>
+          </div>
+          <p className="observer">
+            <strong>Observer can learn</strong>
+            <span className="mono">{model.example.from} → {model.example.to}  ·  {model.example.bandLabel}</span>
+            <span className="fine">{idOpen || amtOpen ? 'A private field has been forced open in this scenario.' : 'No identities or exact value.'}</span>
+          </p>
+        </section>
+        <section className="chain-card">
+          <h3>Public chain</h3>
+          <span className="pill">Visible</span>
+          <p className="eyebrow">Corridor</p>
+          <p className="ledger-value">{model.example.from}  →  {model.example.to}</p>
+          <p className="eyebrow">Amount band</p>
+          <p className="ledger-value mono">{model.example.bandLabel}</p>
+          <p className="fine" style={{ marginTop: '1.1rem' }}>
+            Identity&nbsp;&nbsp;{idOpen ? 'revealed' : '██████'}
+          </p>
+          <p className="fine">
+            Exact value&nbsp;&nbsp;{amtOpen ? `$${model.example.amountCents / 100}` : '██████'}
+          </p>
+        </section>
+        <section className="chain-card">
+          <h3>Midnight shielded</h3>
+          <span className="pill tone-warn">Protected</span>
+          <p className="eyebrow">Selective proof</p>
+          <p className="proof-ok">✓  KYC requirement met</p>
+          <p className="proof-ok">{br.corridorClosed ? '×  Corridor closed in this scenario' : '✓  Corridor within limits'}</p>
+          <p className="proof-ok">✓  Amount inside band</p>
+          <p className="fine" style={{ marginTop: '1.2rem' }}>
+            {idOpen || amtOpen ? 'Some sealed fields are being force-disclosed.' : 'Identity and exact amount sealed'}
+          </p>
+        </section>
+      </div>
 
       <div className="psim-grid">
         <div className="psim-stage" ref={mountRef} role="img" aria-label={t(locale, 'sim_aria')}>
