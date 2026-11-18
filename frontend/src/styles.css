@@ -813,3 +813,35 @@ button { -webkit-tap-highlight-color: transparent; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .btn:active, .chip:active { transform: none; }
 }
+
+/* ---- Midnight Preview mode: connection card, mode toggle, notices, contract panel ---- */
+.mode-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 99px; padding: 2px; background: var(--surface-1); }
+.mode-toggle button {
+  appearance: none; border: 0; background: transparent; color: var(--text-2); cursor: pointer;
+  font: inherit; font-size: 0.78rem; font-weight: 600; padding: 0.35rem 0.75rem; border-radius: 99px;
+}
+.mode-toggle button.on { background: var(--accent); color: var(--accent-ink); }
+.mode-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.conn-card, .notice { display: grid; gap: 0.5rem; margin: 0 0 1.1rem; }
+.conn-card h2, .notice h2 { margin: 0; font-size: 1.05rem; }
+.conn-card p, .notice p { margin: 0; color: var(--text-2); font-size: 0.9rem; }
+.conn-card .conn-actions { display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; margin-top: 0.4rem; }
+.notice { border-left: 3px solid var(--line-strong); }
+.notice.err { border-left-color: var(--danger); }
+.notice.ok { border-left-color: var(--success); }
+.notice .mono { word-break: break-all; font-size: 0.78rem; }
+
+.contract-card { display: grid; gap: 0.5rem; margin: 1.2rem 0; }
+.contract-card .mono { word-break: break-all; font-size: 0.82rem; }
+.contract-card .row { display: flex; gap: 0.8rem; flex-wrap: wrap; align-items: center; }
+
+.audit-panel .audit-h { margin: 1rem 0 0.4rem; font-size: 0.92rem; }
+.audit-panel .audit-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.audit-panel .break { word-break: break-all; }
+.foot a { color: inherit; }
+.card textarea {
+  width: 100%; min-height: 6rem; resize: vertical; font-family: var(--mono); font-size: 0.78rem;
+  color: var(--text); background: var(--bg-deep); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0.6rem;
+}
+.card textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

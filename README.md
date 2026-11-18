@@ -10,6 +10,7 @@ recipient stay private. The recipient claims with a claim link / QR; the sender 
 the corridor’s claim window.
 
 - **Live demo (GitHub Pages):** https://cyptoboy777.github.io/zk-remit/
+- **Midnight Preview contract:** _not deployed yet_. After `npm run deploy:preview` the address is recorded in [`frontend/src/deployment.json`](frontend/src/deployment.json) and shown in the app. Until then the app runs in Simulator mode and says so.
 - **Contract:** [`contract/src/zk-remit.compact`](contract/src/zk-remit.compact)
 - **Tests:** `npm test -w contract` (Compact runtime simulator)
 - **Privacy Simulator:** original in-app tour — shielded vs disclosed language, proof-bloom moment, cinematic camera, 60fps quality tiers, reduced-motion / WebGL 2D fallback, **EN/ES/PT/ZH/FR** (model-driven; not a teardown clone)
@@ -27,7 +28,7 @@ the corridor’s claim window.
 | Claim UX | Manual amount opening | **Claim link / QR** carrying escrow opening |
 | Privacy UX | — | **“What will be revealed”** preview + **anonymity-set** meter + **Privacy Simulator** |
 | UI | Basic tabs | Premium global UI · **EN / ES / PT / ZH / FR** |
-| Networks | Simulator | Simulator live · Preview address **not set until user deploys** (never faked) |
+| Networks | Simulator | Simulator + **Midnight Preview mode** (Lace, `deployment.json`). The app defaults to Preview only when a real deployment is recorded |
 
 ## What’s proven (`sendRemittance`)
 
@@ -62,14 +63,42 @@ npm run build -w frontend
 npm run dev -w frontend
 ```
 
-Deploy to Midnight Preview: see [`../midnight-w3-prep/user-deploy-steps.md`](../midnight-w3-prep/user-deploy-steps.md) (captcha faucet + Lace + local proof server — user laptop only). Set `VITE_CONTRACT_ADDRESS` after deploy. **We never invent contract addresses, txs or users.**
+## Deploy to Midnight Preview (operator laptop only)
+
+Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview. **The wallet seed lives in an untracked `.env` or your shell and is never printed, logged or committed.** The deploy script prints only the contract address.
+
+1. Start the proof server (pinned, never `:latest`):
+   `docker run -p 6300:6300 midnightntwrk/proof-server:8.1.3 midnight-proof-server -v`
+2. Install [Lace](https://www.lace.io/), enable Midnight, create or import a wallet, set the network to **Preview** and the proof server to `http://localhost:6300`.
+3. Get tNIGHT from the [Preview faucet](https://midnight-tmnight-preview.nethermind.dev/) (you solve the captcha), then **Generate tDUST** in Lace (fees are paid in tDUST; it takes a few minutes to accrue).
+4. Compile and install deploy tooling, then deploy:
+   ```bash
+   cp .env.example .env            # then put your wallet seed in .env (it is gitignored)
+   npm run compact                 # needs compactc 0.31.1
+   npm run deploy:setup            # installs scripts/ dependencies (wallet-sdk) once
+   npm run deploy:preview          # deploys, registers a demo issuer + 7 corridors, prints the address
+   ```
+   It writes `frontend/src/deployment.json` (`{ network, contractAddress, deployedAt }`, safe to commit) and `scripts/.local/operator.json` (governor + issuer keys, **private, gitignored**). Pass `--no-seed` to skip seeding.
+5. Commit `frontend/src/deployment.json`, then rebuild/redeploy the site. Add the address to the top of this README.
+
+## Test on Midnight Preview
+
+1. Open the app (or `npm run dev -w frontend`). With a deployment recorded it opens in **Midnight Preview** mode; use the toggle (top right) to fall back to the **Simulator**.
+2. **Connect Lace.** The app tells you if Lace is missing, on the wrong network, or has no tDUST.
+3. **Issuer tab → Operator keys:** paste the contents of `scripts/.local/operator.json` (kept in this browser only), then **Issue my credential**.
+4. **Send:** pick a corridor and amount. Proof generation takes up to about a minute; Lace asks you to approve.
+5. **Claim:** open the claim link / QR (ideally with a second Lace wallet). **Auditor tab:** prove ownership of a receipt to an auditor challenge, or share a read-only view key.
+
+Known prerequisite: `sendRemittance` escrows a **shielded settlement token** (`settlementColor`). The Preview faucet only issues unshielded tNIGHT, so a wallet must hold that shielded token for the escrow leg to run; otherwise the app shows "No settlement tokens in your wallet" and sends nothing. Everything else (deploy, issuer, corridors, credentials, ledger reads) does not need it.
+
+**We never invent contract addresses, transactions or users.**
 
 ## Judge checklist
 
 - [x] Compact compiles (0.31.1) with witnesses + commitments
-- [x] Simulator tests assert ledger state (11 tests)
+- [x] Simulator tests assert ledger state (contract) + deployment loading / backend selection / friendly-error tests (frontend)
 - [x] Frontend calls circuits and reads ledger snapshot
-- [ ] Deployed Preview address in README (blocked on user faucet / Lace)
+- [ ] Deployed Preview address in README (run `npm run deploy:preview`, then add the address here)
 - [x] Privacy table (above) + in-app disclosure preview
 - [x] Apache-2.0 · topic tagging welcome: `midnightntwrk`
 

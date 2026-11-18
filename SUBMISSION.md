@@ -69,7 +69,11 @@ DApp Connector API 4.0.1 · Lace · React 19 · Vite 8 · Vitest 4 · GitHub Act
 
 _Baseline (pre-wave scaffold, 2026-10-20):_ contract, tests, simulator, dApp, CI/Pages.
 _Wave 3 deliverables (Oct 27 – Nov 16) — fill in as they land:_
-- [ ] Deployed on Midnight **Preview** via Lace (address + tx hashes here)
+- [x] **Preview deployment tooling:** `npm run deploy:preview` deploys the compiled contract with a local proof server and a wallet supplied through an environment variable on the operator's laptop (never committed or printed), seeds a demo issuer + 7 corridors, and records the address in `frontend/src/deployment.json`
+- [x] **Midnight Preview mode in the dApp:** joins the deployed contract through Lace (DApp Connector 4.x) and Midnight.js 4.1 and runs send, claim and auditor disclosure through `callTx`; the Simulator remains as a fallback toggle; clear states for Lace missing, wrong network, no tDUST, proof generation and confirmation; friendly errors only
+- [x] **Auditor disclosure UI:** challenge-bound ownership proof and read-only view key, both sender-controlled
+- [x] Tests for deployment loading, backend selection and friendly errors (frontend), alongside the contract suite
+- [ ] Deployed on Midnight **Preview** via Lace (address + tx hashes here: pending the first real deployment run)
 - [ ] Shielded value leg: tDUST/stablecoin moved inside `sendRemittance` / `claim` (`receiveShielded` / `sendShielded`)
 - [ ] Non-membership **revocation** (sparse Merkle / revocation-epoch accumulator)
 - [ ] Rolling monthly **volume** cap via private accumulator (not just count × per-tx cap)

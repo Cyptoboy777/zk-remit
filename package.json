@@ -3,14 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "ZK Remit — compliant cross-border remittances with zero-knowledge KYC on Midnight",
+  "description": "ZK Remit \u2014 compliant cross-border remittances with zero-knowledge KYC on Midnight",
   "license": "Apache-2.0",
-  "engines": { "node": ">=22" },
-  "workspaces": ["contract", "frontend"],
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "contract",
+    "frontend"
+  ],
   "scripts": {
     "compact": "npm run compact -w contract",
-    "test": "npm test -w contract",
+    "test": "npm test -w contract && npm test -w frontend",
     "build": "npm run build -w frontend",
-    "dev": "npm run dev -w frontend"
+    "dev": "npm run dev -w frontend",
+    "deploy:setup": "npm install --prefix scripts",
+    "deploy:preview": "npm run deploy:preview --prefix scripts"
   }
 }

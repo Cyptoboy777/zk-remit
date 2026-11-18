@@ -28,6 +28,9 @@ jobs:
       - name: Unit tests (Compact runtime simulator)
         if: matrix.compactc == '0.31.1'
         run: npm test -w contract -- --reporter=verbose
+      - name: Unit tests (deployment loading, backend selection, friendly errors)
+        if: matrix.compactc == '0.31.1'
+        run: npm test -w frontend -- --reporter=verbose
       - name: Typecheck + build frontend
         if: matrix.compactc == '0.31.1'
         run: npm run build -w frontend

@@ -10,3 +10,8 @@ contract/src/managed/
 *.pem
 *.key
 .DS_Store
+
+# Wallet seeds and operator keys: never commit (deploy script writes these on the operator's laptop only)
+scripts/.local/
+*.seed
+*.mnemonic

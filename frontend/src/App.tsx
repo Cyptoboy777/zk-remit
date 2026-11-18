@@ -13,16 +13,20 @@ import {
   type ZkRemitPrivateState,
 } from '@zk-remit/contract';
 import { SimulatorBackend } from './lib/simulatorBackend';
-import { CONFIGURED_ADDRESS, MidnightBackend } from './lib/midnightBackend';
+import { MidnightBackend, type Stage } from './lib/midnightBackend';
+import { EXPLORER_URL, loadDeployment } from './lib/deployment';
+import { availableModes, defaultMode, modeLabel, type Mode } from './lib/backendSelect';
+import { MidnightProblem, friendlyError, friendlyLine, type Friendly } from './lib/friendlyErrors';
 import type { Backend, LedgerSnapshot } from './lib/types';
 import { buildDisclosure, BAND_LABELS, amountBandOf } from './lib/disclosure';
 import { anonymitySetSize } from './lib/anonymity';
 import { buildClaimHash, parseClaimHash, qrDataUrl, type ClaimPayload } from './lib/claimLink';
 import { LOCALES, t, type Locale } from './lib/i18n';
-import { fromHex } from './lib/codec';
+import { decode, encode, fromHex } from './lib/codec';
 import PrivacySimulator from './privacy/PrivacySimulator';
 import { CorridorFlags, Flag } from './ui/flags';
 import { ActivityList, statusOf } from './ui/ActivityList';
+import AuditPanel from './ui/AuditPanel';
 
 type Tab = 'home' | 'send' | 'claim' | 'issuer' | 'auditor' | 'sim' | 'whatsnew' | 'activity';
 
@@ -88,10 +92,38 @@ const freshPersonas = (): Personas => {
   };
 };
 
-const errMsg = (e: unknown) => {
-  const m = e instanceof Error ? e.message : String(e);
-  const zkr = m.match(/ZK(R| Remit):[^"\n]*/);
-  return zkr ? zkr[0] : m;
+type Operator = { governorSecret: Uint8Array; issuerSecret: Uint8Array };
+type Notice = { kind: 'ok' | 'err'; title: string; body: string; txHash?: string };
+type Conn = { status: 'idle' | 'connecting' | 'ready' | 'problem'; problem?: Friendly };
+
+const personaKey = (address: string) => `zkremit:persona:${address}`;
+const operatorKey = (address: string) => `zkremit:operator:${address}`;
+const readStore = <T,>(key: string): T | null => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? decode<T>(raw) : null;
+  } catch {
+    return null;
+  }
+};
+const writeStore = (key: string, value: unknown) => {
+  try {
+    localStorage.setItem(key, encode(value));
+  } catch {
+    /* storage unavailable (private mode): keep working in memory */
+  }
+};
+const HEX64 = /^[0-9a-fA-F]{64}$/;
+/** Operator file written by the deploy script: { governorSecret, issuerSecret } as 64-char hex. */
+const parseOperator = (text: string): Operator | null => {
+  try {
+    const j = JSON.parse(text) as Record<string, unknown>;
+    const g = String(j.governorSecret ?? '').trim();
+    const i = String(j.issuerSecret ?? '').trim();
+    return HEX64.test(g) && HEX64.test(i) ? { governorSecret: fromHex(g), issuerSecret: fromHex(i) } : null;
+  } catch {
+    return null;
+  }
 };
 
 export default function App() {
@@ -109,8 +141,30 @@ export default function App() {
   const [setupDone, setSetupDone] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
 
-  const refresh = useCallback(async () => setSnap(await backend.ledger()), [backend]);
+  const deployment = useMemo(() => loadDeployment(), []);
+  const [mode, setMode] = useState<Mode>(() => defaultMode(deployment));
+  const [conn, setConn] = useState<Conn>({ status: 'idle' });
+  const [stage, setStage] = useState<Stage | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const [operator, setOperator] = useState<Operator | null>(() => (deployment ? readStore<Operator>(operatorKey(deployment.contractAddress)) : null));
+  const [operatorText, setOperatorText] = useState('');
+  const [operatorBad, setOperatorBad] = useState(false);
+  const live = mode === 'preview' && conn.status === 'ready';
+  const canAct = mode === 'simulator' || live;
+
+  const refresh = useCallback(async () => {
+    if (mode === 'preview' && !live) { setSnap(null); return; }
+    setSnap(await backend.ledger());
+  }, [backend, mode, live]);
   useEffect(() => { void refresh().catch(() => undefined); }, [refresh]);
+  useEffect(() => {
+    if (!live) return;
+    const id = window.setInterval(() => { void refresh().catch(() => undefined); }, 15000);
+    return () => window.clearInterval(id);
+  }, [live, refresh]);
+  useEffect(() => {
+    if (live && deployment) writeStore(personaKey(deployment.contractAddress), { sender: personas.sender, recipient: personas.recipient });
+  }, [live, deployment, personas.sender, personas.recipient]);
 
   useEffect(() => {
     const onHash = () => {
@@ -125,13 +179,19 @@ export default function App() {
     setLog((l) => [{ t: new Date().toLocaleTimeString(), kind, title, detail }, ...l].slice(0, 40));
 
   const run = async (label: string, fn: () => Promise<string | void>) => {
+    if (!canAct) return;
     setBusy(label);
+    setNotice(null);
     try {
       const d = await fn();
       push('ok', label, d || undefined);
     } catch (e) {
-      push('err', `${label} — rejected`, errMsg(e));
+      const f = friendlyError(e);
+      console.debug('[zk-remit]', e);
+      push('err', f.problem === 'contract' ? `${label} — rejected` : label, friendlyLine(e));
+      setNotice({ kind: 'err', title: f.title, body: f.body });
     } finally {
+      setStage(null);
       setBusy(null);
       await refresh().catch(() => undefined);
     }
@@ -144,11 +204,73 @@ export default function App() {
     setSent([]);
     setSetupDone(false);
     setLog([]);
+    setNotice(null);
     push('info', 'New simulator contract', 'Governor key rotated · epoch 1 · empty trees');
   };
 
+  const switchMode = (next: Mode) => {
+    if (next === mode) return;
+    setNotice(null);
+    setSnap(null);
+    setConn({ status: 'idle' });
+    if (next === 'simulator') {
+      setMode('simulator');
+      resetSim();
+    } else {
+      setMode('preview');
+      setPersonas(freshPersonas());
+      setSent([]);
+      setSetupDone(false);
+      setLog([]);
+    }
+  };
+
+  const connectPreview = async () => {
+    if (!deployment) return;
+    setConn({ status: 'connecting' });
+    setNotice(null);
+    try {
+      const b = await MidnightBackend.connect(deployment, setStage);
+      const stored = readStore<{ sender: ZkRemitPrivateState; recipient: ZkRemitPrivateState }>(personaKey(deployment.contractAddress));
+      if (stored) {
+        setPersonas((p) => ({ ...p, sender: stored.sender, recipient: stored.recipient }));
+        setSetupDone(!!stored.sender?.credential);
+      }
+      setBackend(b);
+      setConn({ status: 'ready' });
+      push('ok', 'Connected to Midnight Preview');
+    } catch (e) {
+      console.debug('[zk-remit]', e);
+      setConn({ status: 'problem', problem: friendlyError(e) });
+    } finally {
+      setStage(null);
+    }
+  };
+
+  const importOperator = () => {
+    const op = parseOperator(operatorText);
+    if (!op || !deployment) { setOperatorBad(true); return; }
+    writeStore(operatorKey(deployment.contractAddress), op);
+    setOperator(op);
+    setOperatorText('');
+    setOperatorBad(false);
+  };
+
+  const confirmed = (title: string, body: string, txHash?: string) => {
+    if (mode === 'preview') setNotice({ kind: 'ok', title, body, txHash });
+  };
+
   const seedDemo = () =>
-    run(t(locale, 'setup'), async () => {
+    run(mode === 'preview' ? 'Issue my credential' : t(locale, 'setup'), async () => {
+      if (mode === 'preview') {
+        if (!operator) throw new MidnightProblem('operator-key');
+        const opIssuerPk = pureCircuits.issuerPublicKey(operator.issuerSecret);
+        const cred = makeCredential(personas.sender.holderSecret!, opIssuerPk, TIER.VERIFIED, COUNTRY.UAE, 12n);
+        await backend.issueCredential({ issuerSecret: operator.issuerSecret }, pureCircuits.credentialCommitment(cred));
+        setPersonas((p) => ({ ...p, sender: { ...p.sender, credential: cred } }));
+        setSetupDone(true);
+        return `Credential issued · ${short(toHex(pureCircuits.credentialCommitment(cred)))}`;
+      }
       const issuerPk = pureCircuits.issuerPublicKey(personas.issuer.issuerSecret!);
       await backend.addIssuer(personas.governor, issuerPk);
       await backend.setCorridorPolicy(personas.governor, COUNTRY.UAE, COUNTRY.PHILIPPINES, defaultPolicy());
@@ -186,7 +308,11 @@ export default function App() {
       if (!personas.sender.credential) throw new Error('Seed the demo first (issuer + credential).');
       const coin = freshCoin(BigInt(cents), SETTLEMENT_COLOR);
       const tag = pureCircuits.recipientTagOf(personas.recipient.recipientSecret!);
-      const { receiptId } = await backend.sendRemittance(personas.sender, BigInt(toCountry), 0n, tag, coin);
+      // The receipt id is the nullifier, so a slot is free when its nullifier is not on the ledger yet.
+      const used = new Set(receipts.map((r) => r.id));
+      let slot = 0n;
+      while (slot < 20n && used.has(toHex(pureCircuits.nullifierOf(personas.sender.holderSecret!, snap?.epoch ?? 1n, slot)))) slot++;
+      const { receiptId, txHash } = await backend.sendRemittance(personas.sender, BigInt(toCountry), slot, tag, coin);
       const opening = backend.getEscrow?.(receiptId);
       if (!opening) throw new Error('Escrow opening missing from private state');
       const payload: ClaimPayload = {
@@ -195,12 +321,13 @@ export default function App() {
         coin: { nonce: toHex(opening.coin.nonce), color: toHex(opening.coin.color), value: String(opening.coin.value) },
         salt: toHex(opening.salt),
         recipientSecret: toHex(personas.recipient.recipientSecret!),
-        network: 'simulator',
+        network: mode === 'preview' ? 'preview' : 'simulator',
       };
       const hash = buildClaimHash(payload);
       const link = `${location.origin}${location.pathname}${hash}`;
       const qr = await qrDataUrl(link);
       setSent((s) => [{ id: toHex(receiptId), amount: BigInt(cents), link, qr }, ...s]);
+      confirmed('Transfer confirmed', 'Your transfer is sealed in escrow on Midnight Preview. Share the claim link with the recipient.', txHash);
       return `Receipt ${short(toHex(receiptId))} · claim link ready`;
     });
 
@@ -217,14 +344,15 @@ export default function App() {
               coin: { nonce: '', color: '', value: '' },
               salt: '',
               recipientSecret: toHex(personas.recipient.recipientSecret!),
-              network: 'simulator',
+              network: mode === 'preview' ? 'preview' : 'simulator',
             };
       if (!payload.coin.nonce) {
         const id = fromHex(payload.receiptId);
         const opening = backend.getEscrow?.(id);
         if (!opening) throw new Error('Open the claim link from the sender device, or use the QR.');
         backend.withEscrow?.(personas.recipient, id, opening);
-        await backend.claim(personas.recipient, id);
+        const r = await backend.claim(personas.recipient, id);
+        confirmed('Claim confirmed', 'The escrowed funds were released to your wallet.', r.txHash);
         return `Claimed ${short(payload.receiptId)}`;
       }
       const id = fromHex(payload.receiptId);
@@ -239,11 +367,25 @@ export default function App() {
       };
       const recipient = { recipientSecret: fromHex(payload.recipientSecret) };
       backend.withEscrow?.(recipient, id, opening);
-      await backend.claim(recipient, id);
+      const r = await backend.claim(recipient, id);
+      confirmed('Claim confirmed', 'The escrowed funds were released to your wallet.', r.txHash);
       return `Claimed ${short(payload.receiptId)}`;
     });
 
   const receipts = snap?.receipts ?? [];
+
+  const senderViewKey = personas.sender.holderSecret ? pureCircuits.viewKeyOf(personas.sender.holderSecret) : null;
+  const myReceiptIds = senderViewKey
+    ? receipts.filter((r) => toHex(pureCircuits.viewTagOf(senderViewKey, fromHex(r.id))) === r.viewTag).map((r) => r.id)
+    : [];
+
+  const doDisclose = (receiptIdHex: string, challengeHex: string) =>
+    run('Disclose to auditor', async () => {
+      const r = await backend.proveReceiptOwnership(personas.sender, fromHex(receiptIdHex), fromHex(challengeHex));
+      confirmed('Disclosure recorded', 'The auditor can now verify you sent this receipt. Nothing else about you was revealed.', r.txHash);
+      return `Ownership of ${short(receiptIdHex)} proven`;
+    });
+
   const go = (id: Tab) => { setMoreOpen(false); setTab(id); };
   const startDemo = () => { void seedDemo(); setTab('send'); };
   const pickCorridor = (to: bigint) => { setToCountry(String(to)); setTab('send'); };
@@ -276,11 +418,22 @@ export default function App() {
         <div className="brand" onClick={() => go('home')} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') go('home'); }}>
           <span className="mark" aria-hidden>Z</span>
           <strong>ZK Remit</strong>
-          {!CONFIGURED_ADDRESS && (
+          {mode === 'simulator' ? (
             <span className="pill demo" role="status">{t(locale, 'testnet_banner')}</span>
-          )}
+          ) : live ? (
+            <span className="pill demo tone-ok" role="status">Live on Midnight Preview</span>
+          ) : null}
         </div>
         <div className="top-actions">
+          {availableModes(deployment).length > 1 && (
+            <div className="mode-toggle" role="group" aria-label="Network mode">
+              {availableModes(deployment).map((m) => (
+                <button key={m} type="button" className={mode === m ? 'on' : ''} aria-pressed={mode === m} onClick={() => switchMode(m)}>
+                  {modeLabel(m)}
+                </button>
+              ))}
+            </div>
+          )}
           <label className="lang">
             <span className="sr">{t(locale, 'lang')}</span>
             <select value={locale} onChange={(e) => setLocale(e.target.value as Locale)} aria-label={t(locale, 'lang')}>
@@ -289,7 +442,7 @@ export default function App() {
               ))}
             </select>
           </label>
-          <button type="button" className="btn ghost quiet" onClick={resetSim}>Reset</button>
+          {mode === 'simulator' && <button type="button" className="btn ghost quiet" onClick={resetSim}>Reset</button>}
         </div>
       </header>
       <nav className="nav" aria-label="Primary">
@@ -308,6 +461,36 @@ export default function App() {
       <main id="main" className="main">
         <div className="stage" key={tab}>
 
+        {mode === 'preview' && !live && tab !== 'sim' && tab !== 'whatsnew' && (
+          <section className="card conn-card" role="status" aria-live="polite">
+            <p className="eyebrow">Midnight Preview</p>
+            <h2>
+              {conn.status === 'connecting'
+                ? stage === 'connecting' ? 'Connecting to Lace…' : 'Joining the contract…'
+                : conn.problem ? conn.problem.title : 'Connect your Lace wallet'}
+            </h2>
+            <p>
+              {conn.status === 'connecting'
+                ? 'Approve the connection in Lace if it asks.'
+                : conn.problem ? conn.problem.body : 'Connect Lace on the Preview network to send, claim and audit on the real contract.'}
+            </p>
+            <div className="conn-actions">
+              <button type="button" className="btn primary" disabled={conn.status === 'connecting'} onClick={() => void connectPreview()}>
+                {conn.problem ? 'Try again' : 'Connect Lace'}
+              </button>
+              <button type="button" className="text-link" onClick={() => switchMode('simulator')}>Use Simulator instead</button>
+            </div>
+          </section>
+        )}
+
+        {notice && (tab === 'send' || tab === 'claim' || tab === 'issuer' || tab === 'auditor') && (
+          <section className={`card notice ${notice.kind}`} role={notice.kind === 'err' ? 'alert' : 'status'}>
+            <h2>{notice.title}</h2>
+            <p>{notice.body}</p>
+            {notice.txHash && <p className="mono">Transaction {notice.txHash}</p>}
+          </section>
+        )}
+
         {tab === 'home' && (
           <>
             <section className="home-hero">
@@ -320,7 +503,7 @@ export default function App() {
                 <p className="lede lede-mobile">Send value across borders. Prove compliance. Reveal nothing else.</p>
                 <p className="lede">Move money with the confidence of a proof, and the privacy of a sealed envelope.</p>
                 <div className="hero-cta">
-                  <button type="button" className="btn primary" onClick={startDemo} disabled={!!busy}>
+                  <button type="button" className="btn primary" onClick={startDemo} disabled={!!busy || !canAct}>
                     Start a demo transfer
                   </button>
                   <button type="button" className="text-link" onClick={() => go('sim')}>Privacy Simulator ↗</button>
@@ -354,6 +537,17 @@ export default function App() {
                 ))}
               </ul>
             </section>
+            {deployment && (
+              <section className="card contract-card">
+                <p className="eyebrow">Deployed contract · {deployment.network}</p>
+                <p className="mono">{deployment.contractAddress}</p>
+                <div className="row">
+                  <button type="button" className="btn ghost" onClick={() => void navigator.clipboard?.writeText(deployment.contractAddress)}>Copy address</button>
+                  <a className="text-link" href={EXPLORER_URL} target="_blank" rel="noreferrer">Open Midnight Explorer ↗</a>
+                </div>
+                <p className="fine">In the explorer, switch the network to Preview and search for this address.</p>
+              </section>
+            )}
             <ActivityList receipts={receipts} iso2={iso2of} limit={5} onViewAll={() => go('activity')} />
           </>
         )}
@@ -382,8 +576,8 @@ export default function App() {
               <div className="step-bar" aria-hidden><i style={{ width: `${(sendStep / 4) * 100}%` }} /></div>
 
               {!setupDone && (
-                <button type="button" className="btn primary" onClick={() => void seedDemo()} disabled={!!busy}>
-                  {busy ?? t(locale, 'setup')}
+                <button type="button" className="btn primary" onClick={() => void seedDemo()} disabled={!!busy || !canAct}>
+                  {busy ?? (mode === 'preview' ? 'Issue my credential' : t(locale, 'setup'))}
                 </button>
               )}
 
@@ -413,14 +607,14 @@ export default function App() {
                 <div className="field-box static">
                   {setupDone
                     ? `Verified KYC · ${credTier ?? 'Verified'} · valid through epoch ${String(cred?.expiryEpoch ?? '—')} · ${credHash}`
-                    : 'Seed the demo to issue a Verified credential for the sender.'}
+                    : mode === 'preview' ? 'Issue a credential for this device to send on Midnight Preview.' : 'Seed the demo to issue a Verified credential for the sender.'}
                 </div>
               </div>
 
-              {sending && (
+              {(sending || (mode === 'preview' && !!busy)) && (
                 <div className="proof-progress" role="status">
-                  <strong>Generating zero-knowledge proof</strong>
-                  <span>Checking corridor policy and credential…</span>
+                  <strong>{mode === 'preview' && stage === 'confirmed' ? 'Confirming on Midnight Preview' : 'Generating zero-knowledge proof'}</strong>
+                  <span>{mode === 'preview' ? 'This can take up to a minute. Lace may ask you to approve.' : 'Checking corridor policy and credential…'}</span>
                   <div className="bar" aria-hidden><i /></div>
                 </div>
               )}
@@ -428,7 +622,7 @@ export default function App() {
               <button
                 type="button"
                 className="btn primary send-cta"
-                disabled={!!busy || !setupDone || !cents}
+                disabled={!!busy || !setupDone || !cents || !canAct}
                 onClick={() => void doSend()}
               >
                 {busy ?? t(locale, 'send')}
@@ -484,7 +678,7 @@ export default function App() {
                     </div>
                     {waitingId && <p className="mono fine">Receipt {short(waitingId)}</p>}
                     {!unsealed && (
-                      <button type="button" className="btn primary" disabled={!!busy} onClick={() => void doClaim()}>
+                      <button type="button" className="btn primary" disabled={!!busy || !canAct} onClick={() => void doClaim()}>
                         {busy ?? 'Claim transfer  →'}
                       </button>
                     )}
@@ -530,11 +724,33 @@ export default function App() {
                   <span>Sender tier</span>
                 </div>
               </div>
-              <button type="button" className="cta-panel" disabled={!!busy || setupDone} onClick={() => void seedDemo()}>
+              <button type="button" className="cta-panel" disabled={!!busy || setupDone || !canAct} onClick={() => void seedDemo()}>
                 <strong>＋  Issue KYC credential</strong>
-                <span>{setupDone ? 'A demo credential is already issued in this session.' : 'Seed the demo to add an issuer and issue a private attestation.'}</span>
+                <span>
+                  {setupDone
+                    ? mode === 'preview' ? 'A credential is already issued for this device.' : 'A demo credential is already issued in this session.'
+                    : mode === 'preview' ? 'Issue a private attestation for this device on the live contract.' : 'Seed the demo to add an issuer and issue a private attestation.'}
+                </span>
               </button>
             </div>
+            {mode === 'preview' && (
+              <section className="card">
+                <h2>Operator keys</h2>
+                {operator ? (
+                  <p className="muted">Operator keys are loaded on this device only. They are never uploaded.</p>
+                ) : (
+                  <>
+                    <p className="muted">Issuing needs the operator file created when the contract was deployed. Paste its contents here; it stays in this browser.</p>
+                    <label>
+                      Operator file
+                      <textarea value={operatorText} onChange={(e) => { setOperatorText(e.target.value); setOperatorBad(false); }} spellCheck={false} aria-label="Operator file contents" />
+                    </label>
+                    {operatorBad && <p className="fine" role="alert">That does not look like the operator file. Paste it exactly as saved.</p>}
+                    <button type="button" className="btn ghost" disabled={!operatorText.trim()} onClick={importOperator}>Load operator keys</button>
+                  </>
+                )}
+              </section>
+            )}
             <section className="card table-card">
               <h2>Credentials</h2>
               {setupDone && cred && credHash ? (
@@ -609,6 +825,14 @@ export default function App() {
                 )}
               </section>
             </div>
+            <AuditPanel
+              receipts={receipts}
+              sentIds={myReceiptIds}
+              viewKeyHex={senderViewKey ? toHex(senderViewKey) : null}
+              proofCount={snap?.ownershipProofs}
+              busy={!!busy || !canAct}
+              onProve={doDisclose}
+            />
             {snap && (
               <dl className="stats">
                 <div><dt>Receipts</dt><dd>{String(snap.totalReceipts)}</dd></div>
@@ -637,7 +861,11 @@ export default function App() {
                 <tr><td>Corridors</td><td>Hard-coded open/close</td><td>On-chain CorridorPolicy</td></tr>
                 <tr><td>Issuers</td><td>1</td><td>Many + revoke-at-issue</td></tr>
                 <tr><td>UX</td><td>Basic tabs</td><td>Claim QR · Privacy Simulator</td></tr>
-                <tr><td>Deploy</td><td>Simulator only</td><td>Simulator live; Preview pending user faucet</td></tr>
+                <tr>
+                  <td>Deploy</td>
+                  <td>Simulator only</td>
+                  <td>{deployment ? `Midnight ${deployment.network === 'preview' ? 'Preview' : deployment.network} · ${short(deployment.contractAddress, 8)}` : 'Simulator · not yet deployed to Preview'}</td>
+                </tr>
               </tbody>
             </table>
             <p className="fine">Compare: <code>github.com/Cyptoboy777/zk-remit/compare/wave2-baseline...wave3</code></p>
@@ -649,7 +877,7 @@ export default function App() {
             <section className="page-head">
               <p className="eyebrow">Session log</p>
               <h1 className="page-title">Activity</h1>
-              <p className="lede">Every row is from this simulator session. Nothing is pre-filled.</p>
+              <p className="lede">{mode === 'preview' ? 'Rows come from the live contract on Midnight Preview. Nothing is pre-filled.' : 'Every row is from this simulator session. Nothing is pre-filled.'}</p>
             </section>
             <ActivityList receipts={receipts} iso2={iso2of} />
             <aside className="card log" aria-live="polite">
@@ -667,8 +895,12 @@ export default function App() {
       </main>
 
       <footer className="foot">
-        <span>Apache-2.0 · Midnight Compact · {backend.label}</span>
-        <span>{CONFIGURED_ADDRESS ? `Contract ${short(CONFIGURED_ADDRESS, 8)}` : 'Midnight Preview'}</span>
+        <span>Apache-2.0 · Midnight Compact · {mode === 'preview' ? 'Midnight Preview' : backend.label}</span>
+        <span>
+          {deployment
+            ? <>Contract {short(deployment.contractAddress, 8)} · <a href={EXPLORER_URL} target="_blank" rel="noreferrer">Explorer ↗</a></>
+            : 'Not deployed to Preview yet'}
+        </span>
       </footer>
 
       <nav className="dock" aria-label="Mobile">
@@ -688,7 +920,7 @@ export default function App() {
           <button type="button" onClick={() => go('auditor')}>{t(locale, 'nav_auditor')}</button>
           <button type="button" onClick={() => go('sim')}>{t(locale, 'nav_sim')}</button>
           <button type="button" onClick={() => go('whatsnew')}>{t(locale, 'nav_whatsnew')}</button>
-          <button type="button" onClick={() => { setMoreOpen(false); resetSim(); }}>Reset demo</button>
+          {mode === 'simulator' && <button type="button" onClick={() => { setMoreOpen(false); resetSim(); }}>Reset demo</button>}
         </div>
       )}
     </div>

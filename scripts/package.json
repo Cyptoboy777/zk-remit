@@ -1,0 +1,23 @@
+{
+  "name": "@zk-remit/scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Operator tooling (deploys to Midnight Preview). Not a workspace on purpose: the root lockfile and CI stay untouched, and the Midnight runtime packages resolve from the single copy installed at the repo root.",
+  "scripts": {
+    "deploy:preview": "tsx deploy-preview.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "4.1.1",
+    "@midnight-ntwrk/wallet-sdk": "1.2.0",
+    "rxjs": "^7.8.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/ws": "^8.5.12",
+    "tsx": "^4.19.0",
+    "typescript": "^5.9.3"
+  }
+}

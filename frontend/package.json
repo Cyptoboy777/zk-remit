@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build && npm run copy-zk",
     "copy-zk": "mkdir -p dist/keys dist/zkir && cp -r ../contract/src/managed/zk-remit/keys/. dist/keys/ && cp -r ../contract/src/managed/zk-remit/zkir/. dist/zkir/",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-runtime": "0.16.0",

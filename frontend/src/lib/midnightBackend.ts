@@ -1,67 +1,259 @@
 /*
- * Midnight network backend: Lace + Midnight.js 4.1.
- * Deploy/call requires a real contract address (VITE_CONTRACT_ADDRESS) and user wallet.
- * Never invents addresses or transaction hashes.
+ * Midnight Preview backend: Lace (DApp Connector 4.x) + Midnight.js 4.1.
+ *
+ * Joins the contract recorded in deployment.json and drives the real circuits through `callTx`.
+ * Never invents addresses, balances or transaction hashes: anything it cannot read from the
+ * wallet or the chain becomes a typed MidnightProblem that the UI renders as a friendly state.
+ *
+ * NOTE: written against Midnight's published Lace / Midnight.js 4.1 guides without being able to
+ * run it against Preview from the authoring environment. The wallet adapter (`laceProviders`) is
+ * the one place most likely to need a small fix on first contact with a real wallet.
  */
 import semver from 'semver';
 import type { ConnectedAPI, InitialAPI } from '@midnight-ntwrk/dapp-connector-api';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-import type { ZkRemitPrivateState } from '@zk-remit/contract';
-import type { Backend, ShieldedCoin } from './types';
+import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
+import { FetchZkConfigProvider } from '@midnight-ntwrk/midnight-js-fetch-zk-config-provider';
+import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
+import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
+import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
+import * as protocolLedger from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import {
+  Contract,
+  defaultPolicy,
+  ledger as decodeLedger,
+  toHex,
+  witnesses,
+  type ZkRemitPrivateState,
+} from '@zk-remit/contract';
+import type { Backend, LedgerSnapshot, ShieldedCoin } from './types';
+import { snapshot } from './types';
+import { browserPrivateStateProvider } from './privateStateProvider';
+import { fromHex } from './codec';
+import { MidnightProblem } from './friendlyErrors';
+import type { Deployment } from './deployment';
 
-export const NETWORK_ID = (import.meta.env.VITE_NETWORK_ID as string) || 'preview';
-export const CONFIGURED_ADDRESS = (import.meta.env.VITE_CONTRACT_ADDRESS as string | undefined)?.trim() || '';
+export type Stage = 'connecting' | 'proving' | 'confirmed';
+
+const PRIVATE_STATE_ID = 'zkRemitPrivateState';
+
+type EscrowOpening = { coin: ShieldedCoin & { mt_index: bigint }; salt: Uint8Array };
+
+// ---------------------------------------------------------------- Lace detection / connection
 
 export const detectLace = (): InitialAPI | undefined => {
   const m = (window as unknown as { midnight?: Record<string, InitialAPI> }).midnight;
   if (!m) return undefined;
-  return Object.values(m).find((w) => !!w && typeof w === 'object' && 'apiVersion' in w && semver.satisfies(w.apiVersion, '4.x'));
+  return Object.values(m).find(
+    (w) => !!w && typeof w === 'object' && 'apiVersion' in w && semver.satisfies(w.apiVersion, '4.x'),
+  );
 };
 
-export const connectLace = async () => {
-  let initial: InitialAPI | undefined;
-  for (let i = 0; i < 30 && !initial; i++) {
-    initial = detectLace();
-    if (!initial) await new Promise((r) => setTimeout(r, 100));
+/** Extensions inject `window.midnight` a moment after load, so poll briefly before giving up. */
+const waitForLace = async (): Promise<InitialAPI | undefined> => {
+  for (let i = 0; i < 30; i++) {
+    const found = detectLace();
+    if (found) return found;
+    await new Promise((r) => setTimeout(r, 100));
   }
-  if (!initial) throw new Error('Midnight Lace wallet (DApp Connector v4) not found.');
-  setNetworkId(NETWORK_ID as 'preview');
-  const api = await initial.connect(NETWORK_ID);
-  const addrs = await api.getShieldedAddresses();
-  return { name: (initial as { name?: string }).name ?? 'Lace', apiVersion: initial.apiVersion, shieldedAddress: addrs.shieldedAddress, api };
+  return undefined;
 };
 
-/** Placeholder until the user deploys and sets VITE_CONTRACT_ADDRESS. */
+const zkBaseUrl = () => `${window.location.origin}${import.meta.env.BASE_URL}`.replace(/\/+$/, '');
+
+/** Adapts the Lace ConnectedAPI to Midnight.js wallet + midnight providers. */
+const laceProviders = async (api: ConnectedAPI) => {
+  const addrs = await api.getShieldedAddresses();
+  const Tx = (protocolLedger as any).Transaction;
+  const walletProvider = {
+    getCoinPublicKey: () => addrs.shieldedCoinPublicKey,
+    getEncryptionPublicKey: () => addrs.shieldedEncryptionPublicKey,
+    balanceTx: async (tx: any) => {
+      const res = await api.balanceUnsealedTransaction(toHex(tx.serialize()));
+      return Tx.deserialize('signature', 'proof', 'binding', fromHex(res.tx));
+    },
+  };
+  const midnightProvider = {
+    submitTx: async (tx: any) => {
+      await api.submitTransaction(toHex(tx.serialize()));
+      return tx.identifiers()[0];
+    },
+  };
+  return { walletProvider, midnightProvider };
+};
+
+// ---------------------------------------------------------------- Backend
+
 export class MidnightBackend implements Backend {
   readonly kind = 'midnight' as const;
-  readonly label: string;
-  readonly contractAddress?: string;
-  constructor(address?: string) {
-    this.contractAddress = address || CONFIGURED_ADDRESS || undefined;
-    this.label = this.contractAddress
-      ? `Midnight ${NETWORK_ID} · ${this.contractAddress.slice(0, 12)}…`
-      : `Midnight ${NETWORK_ID} · not deployed`;
+  readonly label = 'Midnight Preview';
+  readonly contractAddress: string;
+
+  private readonly escrows = new Map<string, EscrowOpening>();
+
+  private constructor(
+    private readonly api: ConnectedAPI,
+    private readonly providers: any,
+    private readonly deployed: any,
+    deployment: Deployment,
+    private readonly onStage?: (s: Stage) => void,
+  ) {
+    this.contractAddress = deployment.contractAddress;
   }
-  private needDeployed(): never {
-    throw new Error(
-      'No contract address configured. Deploy on Preview (see user-deploy-steps.md), then set VITE_CONTRACT_ADDRESS. We never invent addresses.',
-    );
+
+  /** Connects Lace, checks network and fees, and joins the deployed contract. Throws MidnightProblem. */
+  static async connect(deployment: Deployment, onStage?: (s: Stage) => void): Promise<MidnightBackend> {
+    onStage?.('connecting');
+    const initial = await waitForLace();
+    if (!initial) throw new MidnightProblem('lace-missing');
+
+    setNetworkId(deployment.network as 'preview');
+
+    let api: ConnectedAPI;
+    try {
+      api = await initial.connect(deployment.network);
+    } catch (e) {
+      const m = e instanceof Error ? e.message : '';
+      throw new MidnightProblem(/network/i.test(m) ? 'wrong-network' : 'rejected');
+    }
+
+    const cfg = await api.getConfiguration();
+    if (cfg.networkId !== deployment.network) throw new MidnightProblem('wrong-network');
+
+    const dust = await api.getDustBalance();
+    if (dust.balance <= 0n) throw new MidnightProblem('no-dust');
+
+    const { walletProvider, midnightProvider } = await laceProviders(api);
+    const zk = new FetchZkConfigProvider(zkBaseUrl());
+    const privateStateProvider = browserPrivateStateProvider<string, ZkRemitPrivateState>();
+    (privateStateProvider as any).setContractAddress(deployment.contractAddress);
+
+    const providers = {
+      privateStateProvider,
+      publicDataProvider: indexerPublicDataProvider(cfg.indexerUri, cfg.indexerWsUri),
+      zkConfigProvider: zk,
+      proofProvider: httpClientProofProvider(cfg.proverServerUri, zk),
+      walletProvider,
+      midnightProvider,
+    };
+
+    const compiledContract = (CompiledContract as any)
+      .make('zk-remit', Contract)
+      .pipe(
+        (CompiledContract as any).withWitnesses(witnesses),
+        // Assets are served over HTTP by FetchZkConfigProvider; this path is only the compiled-output label.
+        (CompiledContract as any).withCompiledFileAssets('./managed/zk-remit'),
+      );
+
+    let deployed: any;
+    try {
+      deployed = await findDeployedContract(providers as any, {
+        contractAddress: deployment.contractAddress,
+        compiledContract,
+        privateStateId: PRIVATE_STATE_ID,
+        initialPrivateState: (await privateStateProvider.get(PRIVATE_STATE_ID)) ?? {},
+      } as any);
+    } catch {
+      throw new MidnightProblem('not-found');
+    }
+
+    const backend = new MidnightBackend(api, providers, deployed, deployment, onStage);
+    const stored = (await privateStateProvider.get(PRIVATE_STATE_ID)) as ZkRemitPrivateState | null;
+    for (const [id, rec] of Object.entries(stored?.escrows ?? {})) backend.escrows.set(id, rec as EscrowOpening);
+    onStage?.('confirmed');
+    return backend;
   }
-  async addIssuer(_as: ZkRemitPrivateState, _pk: Uint8Array): Promise<void> { this.needDeployed(); }
-  async issueCredential(_as: ZkRemitPrivateState, _c: Uint8Array): Promise<void> { this.needDeployed(); }
-  async setCorridorPolicy(_as: ZkRemitPrivateState, _f: bigint, _t: bigint): Promise<void> { this.needDeployed(); }
-  async advanceEpoch(_as: ZkRemitPrivateState): Promise<void> { this.needDeployed(); }
+
+  // ---- private state helpers
+
+  private async setPrivate(as: ZkRemitPrivateState, extra: Partial<ZkRemitPrivateState> = {}) {
+    const ps = this.providers.privateStateProvider;
+    const current = ((await ps.get(PRIVATE_STATE_ID)) ?? {}) as ZkRemitPrivateState;
+    const escrows = { ...(current.escrows ?? {}), ...Object.fromEntries(this.escrows), ...(as.escrows ?? {}) };
+    await ps.set(PRIVATE_STATE_ID, { ...current, ...as, ...extra, escrows });
+  }
+
+  private async call(name: string, as: ZkRemitPrivateState, args: unknown[], extra: Partial<ZkRemitPrivateState> = {}) {
+    await this.setPrivate(as, extra);
+    this.onStage?.('proving');
+    const tx = await this.deployed.callTx[name](...args);
+    this.onStage?.('confirmed');
+    return tx;
+  }
+
+  private static txHash(tx: any): string | undefined {
+    const h = tx?.public?.txHash;
+    return typeof h === 'string' ? h : undefined;
+  }
+
+  // ---- circuits
+
+  async addIssuer(as: ZkRemitPrivateState, pk: Uint8Array) {
+    await this.call('addIssuer', as, [pk]);
+  }
+  async issueCredential(as: ZkRemitPrivateState, c: Uint8Array) {
+    await this.call('issueCredential', as, [c]);
+  }
+  async setCorridorPolicy(as: ZkRemitPrivateState, f: bigint, t: bigint, policy = defaultPolicy()) {
+    await this.call('setCorridorPolicy', as, [f, t, policy]);
+  }
+  async advanceEpoch(as: ZkRemitPrivateState) {
+    await this.call('advanceEpoch', as, []);
+  }
+
+  /** Shielded settlement balance held by the connected wallet, for the escrow colour. */
+  async settlementBalance(color: Uint8Array): Promise<bigint> {
+    const want = toHex(color).toLowerCase();
+    const balances = await this.api.getShieldedBalances();
+    const key = Object.keys(balances).find((k) => k.toLowerCase().endsWith(want));
+    return key ? balances[key] : 0n;
+  }
+
   async sendRemittance(
-    _as: ZkRemitPrivateState,
-    _to: bigint,
-    _slot: bigint,
-    _tag: Uint8Array,
-    _coin: ShieldedCoin,
-  ): Promise<{ receiptId: Uint8Array }> {
-    this.needDeployed();
+    as: ZkRemitPrivateState,
+    to: bigint,
+    slot: bigint,
+    tag: Uint8Array,
+    coin: ShieldedCoin,
+    salt?: Uint8Array,
+  ): Promise<{ receiptId: Uint8Array; txHash?: string }> {
+    if ((await this.settlementBalance(coin.color)) < coin.value) throw new MidnightProblem('no-settlement');
+    const escrowSaltValue = salt ?? crypto.getRandomValues(new Uint8Array(32));
+    const tx = await this.call('sendRemittance', as, [to, slot, tag, coin], { escrowSaltValue });
+    const receiptId = tx?.private?.result as Uint8Array | undefined;
+    if (!(receiptId instanceof Uint8Array)) throw new MidnightProblem('unknown');
+    // The recipient needs this opening (via the claim link); keep it in this device's private state too.
+    this.escrows.set(toHex(receiptId), { coin: { ...coin, mt_index: 0n }, salt: escrowSaltValue });
+    await this.setPrivate(as);
+    return { receiptId, txHash: MidnightBackend.txHash(tx) };
   }
-  async claim(_as: ZkRemitPrivateState, _id: Uint8Array): Promise<{ txHash?: string }> { this.needDeployed(); }
-  async reclaim(_as: ZkRemitPrivateState, _id: Uint8Array): Promise<{ txHash?: string }> { this.needDeployed(); }
-  async proveReceiptOwnership(_as: ZkRemitPrivateState, _id: Uint8Array, _ch: Uint8Array): Promise<{ txHash?: string }> { this.needDeployed(); }
-  async ledger(): Promise<import('./types').LedgerSnapshot> { this.needDeployed(); }
+
+  async claim(as: ZkRemitPrivateState, id: Uint8Array) {
+    const tx = await this.call('claim', as, [id]);
+    return { txHash: MidnightBackend.txHash(tx) };
+  }
+  async reclaim(as: ZkRemitPrivateState, id: Uint8Array) {
+    const tx = await this.call('reclaim', as, [id]);
+    return { txHash: MidnightBackend.txHash(tx) };
+  }
+  async proveReceiptOwnership(as: ZkRemitPrivateState, id: Uint8Array, challenge: Uint8Array) {
+    const tx = await this.call('proveReceiptOwnership', as, [id, challenge]);
+    return { txHash: MidnightBackend.txHash(tx) };
+  }
+
+  // ---- reads
+
+  async ledger(): Promise<LedgerSnapshot> {
+    const state = await this.providers.publicDataProvider.queryContractState(this.contractAddress);
+    if (!state) throw new MidnightProblem('not-found');
+    return snapshot(decodeLedger(state.data));
+  }
+
+  getEscrow(receiptId: Uint8Array) {
+    return this.escrows.get(toHex(receiptId));
+  }
+
+  withEscrow(_as: ZkRemitPrivateState, receiptId: Uint8Array, opening: EscrowOpening) {
+    this.escrows.set(toHex(receiptId), opening);
+  }
 }
