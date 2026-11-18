@@ -132,7 +132,7 @@ export class MidnightBackend implements Backend {
       privateStateProvider,
       publicDataProvider: indexerPublicDataProvider(cfg.indexerUri, cfg.indexerWsUri),
       zkConfigProvider: zk,
-      proofProvider: httpClientProofProvider(cfg.proverServerUri, zk),
+      proofProvider: httpClientProofProvider(cfg.proverServerUri ?? 'http://localhost:6300', zk),
       walletProvider,
       midnightProvider,
     };
