@@ -4,13 +4,18 @@
  * Runs on the OPERATOR'S LAPTOP only. The wallet comes from an environment variable and is
  * never written to disk, logged or committed. The only thing printed is the contract address.
  *
- *   MIDNIGHT_WALLET_SEED=<64 hex chars>   (put it in an untracked .env, or export it in your shell)
- *   npm run deploy:preview
+ *   MIDNIGHT_WALLET_MNEMONIC="<your 24 words>"   the Lace recovery phrase (recommended), OR
+ *   MIDNIGHT_WALLET_SEED=<64 hex chars>          a raw hex seed
+ *   (put it in an untracked .env, or export it in your shell)
+ *
+ *   npm run deploy:preview -- --check    syncs the wallet and reports whether tDUST is available, then stops
+ *   npm run deploy:preview               deploys
  *
  * Needs: a local proof server on http://localhost:6300, a wallet funded with tNIGHT that has
  * generated tDUST, and the contract compiled with keys (npm run compact).
  *
- * Flags: --no-seed (deploy only), --no-test-mint (do not enable Preview-only test funds).
+ * Flags: --check (report funding, do not deploy), --no-seed (deploy only),
+ * --no-test-mint (do not enable Preview-only test funds).
  *
  * Writes:
  *   frontend/src/deployment.json   { network, contractAddress, deployedAt }   (public, committed)
@@ -24,6 +29,8 @@ import { existsSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
+import { mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english';
 import WebSocket from 'ws';
 import * as Rx from 'rxjs';
 
@@ -99,11 +106,22 @@ for (const f of ['.env', resolve(repo, '.env')]) {
   }
 }
 
+const mnemonic = (process.env.MIDNIGHT_WALLET_MNEMONIC ?? '').trim().split(/\s+/).filter(Boolean).join(' ');
 const seedHex = (process.env.MIDNIGHT_WALLET_SEED ?? '').trim().replace(/^0x/, '');
-if (!/^[0-9a-fA-F]{64}$/.test(seedHex)) {
-  die(
-    'MIDNIGHT_WALLET_SEED is missing or not 64 hex characters.\n' +
-      'Set it in an untracked .env file or export it in this shell, then run again.\n' +
+let seedBytes: Buffer;
+if (mnemonic) {
+  if (!validateMnemonic(mnemonic, wordlist)) {
+    die('MIDNIGHT_WALLET_MNEMONIC is not a valid recovery phrase (check the words and their order).');
+  }
+  // Standard BIP39 seed, the same derivation Lace uses for its recovery phrase.
+  seedBytes = Buffer.from(mnemonicToSeedSync(mnemonic));
+} else if (/^[0-9a-fA-F]{64}$/.test(seedHex)) {
+  seedBytes = Buffer.from(seedHex, 'hex');
+} else {
+  seedBytes = die(
+    'No wallet is configured.\n' +
+      'Set MIDNIGHT_WALLET_MNEMONIC (your 24-word Lace recovery phrase) or MIDNIGHT_WALLET_SEED (64 hex chars)\n' +
+      'in an untracked .env file or export it in this shell, then run again.\n' +
       'It is read from the environment only and is never printed or saved.',
   );
 }
@@ -124,7 +142,7 @@ setNetworkId(NETWORK_ID);
 (globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
 
 const buildWallet = async () => {
-  const hd = HDWallet.fromSeed(Buffer.from(seedHex, 'hex'));
+  const hd = HDWallet.fromSeed(seedBytes);
   if (hd.type !== 'seedOk') die('The wallet seed could not be used. Check that it is the 64-character hex seed.');
   const derived = (hd as any).hdWallet.selectAccount(0).selectRoles([Roles.Zswap, Roles.NightExternal, Roles.Dust]).deriveKeysAt(0);
   if (derived.type !== 'keysDerived') die('Could not derive wallet keys from the seed.');
@@ -220,6 +238,23 @@ const memoryPrivateState = () => {
 
 const main = async () => {
   const w = await buildWallet();
+
+  if (process.argv.includes('--check')) {
+    // Funding check only: nothing is deployed and nothing is written.
+    say('Syncing wallet with Preview (this can take a few minutes the first time)…');
+    await w.wallet.waitForSyncedState();
+    const state: any = await Rx.firstValueFrom(w.wallet.state().pipe(Rx.filter((s: any) => s.isSynced)));
+    const dust = (state.dust.balance(new Date()) as bigint) > 0n;
+    say(`Wallet synced. tDUST available: ${dust ? 'yes' : 'no'}`);
+    say(
+      dust
+        ? 'This wallet can deploy. Run again without --check.'
+        : 'No tDUST yet. If you already did the faucet and "Generate tDUST" in Lace, wait a few minutes and re-run --check.\n' +
+            'If it stays "no" after ~10 minutes, this phrase may not match the Lace wallet you funded: tell Claude.',
+    );
+    return;
+  }
+
   await waitForFunds(w.wallet);
 
   const zkConfigProvider = new (NodeZkConfigProvider as any)(ZK_DIR);

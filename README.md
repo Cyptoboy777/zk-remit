@@ -65,7 +65,7 @@ npm run dev -w frontend
 
 ## Deploy to Midnight Preview (operator laptop only)
 
-Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview. **The wallet seed lives in an untracked `.env` or your shell and is never printed, logged or committed.** The deploy script prints only the contract address.
+Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview. **The wallet recovery phrase / seed lives in an untracked `.env` or your shell and is never printed, logged or committed.** The deploy script prints only the contract address.
 
 1. Start the proof server (pinned, never `:latest`):
    `docker run -p 6300:6300 midnightntwrk/proof-server:8.1.3 midnight-proof-server -v`
@@ -73,10 +73,11 @@ Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview.
 3. Get tNIGHT from the [Preview faucet](https://midnight-tmnight-preview.nethermind.dev/) (you solve the captcha), then **Generate tDUST** in Lace (fees are paid in tDUST; it takes a few minutes to accrue).
 4. Compile and install deploy tooling, then deploy:
    ```bash
-   cp .env.example .env            # then put your wallet seed in .env (it is gitignored)
+   cp .env.example .env            # then put your Lace recovery phrase in .env (it is gitignored)
    npm run compact                 # needs compactc 0.31.1
    npm run deploy:setup            # installs scripts/ dependencies (wallet-sdk) once
-   npm run deploy:preview          # deploys, registers a demo issuer + 7 corridors, prints the address
+   npm run deploy:preview -- --check   # optional: syncs and tells you if tDUST is available, deploys nothing
+   npm run deploy:preview          # deploys, registers a demo issuer + 7 corridors, enables Preview test funds, prints the address
    ```
    It writes `frontend/src/deployment.json` (`{ network, contractAddress, deployedAt }`, safe to commit) and `scripts/.local/operator.json` (governor + issuer keys, **private, gitignored**). Pass `--no-seed` to skip seeding.
 5. Commit `frontend/src/deployment.json`, then rebuild/redeploy the site. Add the address to the top of this README.
