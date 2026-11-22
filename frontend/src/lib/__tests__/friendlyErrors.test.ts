@@ -8,6 +8,7 @@ describe('friendly errors', () => {
     expect(friendlyError(new MidnightProblem('no-dust')).body).toMatch(/tDUST/);
     expect(friendlyError(new MidnightProblem('no-settlement')).title).toMatch(/settlement/i);
     expect(friendlyError(new MidnightProblem('operator-key')).body).toMatch(/Issuer tab/);
+    expect(friendlyError(new MidnightProblem('escrow-index')).title).toMatch(/Release is not available/);
   });
 
   it('passes through only the contract rule text', () => {
@@ -15,6 +16,13 @@ describe('friendly errors', () => {
     const f = friendlyError(new Error('failed assert: ZKR: amount exceeds tier limit'));
     expect(f.problem).toBe('contract');
     expect(f.body).toBe('Amount exceeds tier limit.');
+  });
+
+  it('shows the mint rules as plain sentences', () => {
+    expect(friendlyError(new Error('ZKR: mint exceeds the per-call cap')).body).toBe('Mint exceeds the per-call cap.');
+    expect(friendlyError(new Error('ZKR: test funds are not enabled on this deployment')).body).toBe(
+      'Test funds are not enabled on this deployment.',
+    );
   });
 
   it('classifies wallet rejection, proof server and network failures', () => {

@@ -20,6 +20,7 @@ import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-j
 import * as protocolLedger from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import {
   Contract,
+  TEST_MINT_CAP_CENTS,
   defaultPolicy,
   ledger as decodeLedger,
   toHex,
@@ -36,6 +37,9 @@ import type { Deployment } from './deployment';
 export type Stage = 'connecting' | 'proving' | 'confirmed';
 
 const PRIVATE_STATE_ID = 'zkRemitPrivateState';
+
+/** Preview-only test funds: largest amount one mintTestSettlement call may mint (cents). */
+export const TEST_FUNDS_CAP_CENTS = TEST_MINT_CAP_CENTS;
 
 type EscrowOpening = { coin: ShieldedCoin & { mt_index: bigint }; salt: Uint8Array };
 
@@ -223,16 +227,51 @@ export class MidnightBackend implements Backend {
     const receiptId = tx?.private?.result as Uint8Array | undefined;
     if (!(receiptId instanceof Uint8Array)) throw new MidnightProblem('unknown');
     // The recipient needs this opening (via the claim link); keep it in this device's private state too.
+    // mt_index 0n is a placeholder only: the commitment ignores it, and claim/reclaim replace it with the
+    // real index from resolveEscrowIndex() before spending.
     this.escrows.set(toHex(receiptId), { coin: { ...coin, mt_index: 0n }, salt: escrowSaltValue });
     await this.setPrivate(as);
     return { receiptId, txHash: MidnightBackend.txHash(tx) };
   }
 
+  /**
+   * Preview-only test funds: mints shielded settlement tokens to the connected wallet, capped per call.
+   * Fails with the contract's own rule if the governor has not enabled test funds on this deployment.
+   */
+  async mintTestFunds(amountCents: bigint): Promise<{ txHash?: string }> {
+    const mintNonceValue = crypto.getRandomValues(new Uint8Array(32));
+    const tx = await this.call('mintTestSettlement', {}, [amountCents], { mintNonceValue });
+    return { txHash: MidnightBackend.txHash(tx) };
+  }
+
+  /**
+   * The real position of an escrow coin in the chain's coin tree, which spending it requires.
+   *
+   * OPEN ITEM. No documented API returns this for a coin held by a contract, and the one documented
+   * route (the contract storing the coin with writeCoin) publishes the exact amount, which this app
+   * promises not to do. Until that is decided this fails safe before any proof or fee, instead of
+   * guessing an index. The simulator is unaffected: it carries a simulated index in the opening.
+   */
+  private async resolveEscrowIndex(_coin: ShieldedCoin): Promise<bigint> {
+    throw new MidnightProblem('escrow-index');
+  }
+
+  /** Swaps the placeholder index in a stored opening for the real one. */
+  private async withRealIndex(id: Uint8Array) {
+    const key = toHex(id);
+    const opening = this.escrows.get(key);
+    if (!opening) return; // the contract will report the missing opening itself
+    const mt_index = await this.resolveEscrowIndex(opening.coin);
+    this.escrows.set(key, { ...opening, coin: { ...opening.coin, mt_index } });
+  }
+
   async claim(as: ZkRemitPrivateState, id: Uint8Array) {
+    await this.withRealIndex(id);
     const tx = await this.call('claim', as, [id]);
     return { txHash: MidnightBackend.txHash(tx) };
   }
   async reclaim(as: ZkRemitPrivateState, id: Uint8Array) {
+    await this.withRealIndex(id);
     const tx = await this.call('reclaim', as, [id]);
     return { txHash: MidnightBackend.txHash(tx) };
   }

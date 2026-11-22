@@ -60,6 +60,10 @@ export struct EscrowOpening {
 
 export ledger governorPk: Bytes<32>;
 export ledger settlementColor: Bytes<32>;
+// PREVIEW / TESTNET ONLY. Off unless the governor calls enableTestMint(). Lets any wallet mint demo
+// settlement funds so the shielded-escrow flow can be exercised without an external stablecoin.
+export ledger testMintEnabled: Boolean;
+export ledger testMints: Counter;
 // Append-only issuer registry (Compact MerkleTree/HistoricMerkleTree insert returns void; no leaf overwrite).
 // Revocation is tracked in revokedIssuers and enforced at issue time (issuer identity is public on issue txs).
 // Which issuer attested a *credential* stays private at send time via Merkle membership of the credential leaf.
@@ -88,10 +92,12 @@ witness credentialPath(commitment: Bytes<32>): MerkleTreePath<16, Bytes<32>>;
 witness recipientSecret(): Bytes<32>;
 witness escrowSalt(): Bytes<32>;
 witness escrowOpening(receiptId: Bytes<32>): EscrowOpening;
+witness mintNonce(): Bytes<32>;
 
 constructor(governor: Bytes<32>, color: Bytes<32>) {
   governorPk = disclose(governor);
   settlementColor = disclose(color);
+  testMintEnabled = false;
   epoch.increment(1);
   for (const b of [0, 1, 2, 3]) {
     bandVolume.insert(b as Uint<8>, default<Counter>);
@@ -242,6 +248,33 @@ export circuit advanceEpoch(): [] {
   epoch.increment(1);
 }
 
+// ---------- Preview-only test funds ----------
+// NOT part of the production design. A mainnet deployment never calls enableTestMint(), so
+// mintTestSettlement() stays inert there. The minted token's colour is derived by the runtime from
+// the domain separator and this contract's address, so it cannot be known before deployment; the
+// first mint therefore records it as the settlement colour that sendRemittance accepts.
+
+export circuit enableTestMint(): [] {
+  assertGovernor();
+  testMintEnabled = true;
+}
+
+// Any wallet may mint demo settlement funds to itself, capped per call (100000 = 1000.00 in cents,
+// kept in sync with TEST_MINT_CAP_CENTS in simulator.ts by a test).
+export circuit mintTestSettlement(amount: Uint<64>): [] {
+  assert(testMintEnabled, "ZKR: test funds are not enabled on this deployment");
+  assert(amount > 0, "ZKR: amount must be positive");
+  assert(amount <= 100000, "ZKR: mint exceeds the per-call cap");
+  const coin = mintShieldedToken(
+    pad(32, "zkremit:test:settlement"),
+    disclose(amount),
+    disclose(mintNonce()),
+    left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey())
+  );
+  settlementColor = disclose(coin.color);
+  testMints.increment(1);
+}
+
 // ---------- Send: compliance + shielded escrow ----------
 
 export circuit sendRemittance(
@@ -289,6 +322,9 @@ export circuit sendRemittance(
   nullifiers.insert(nul);
 
   // Shielded escrow: custody without publishing the coin nonce.
+  // mt_index is zeroed in the commitment on purpose: the coin's real position in the chain's coin
+  // tree only exists after this transaction is applied, so it cannot be bound here. claim/reclaim
+  // normalise the same way when checking the opening, and spend with the real index the opening carries.
   receiveShielded(disclose(coin));
   const q = QualifiedShieldedCoinInfo {
     nonce: coin.nonce,

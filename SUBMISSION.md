@@ -72,6 +72,8 @@ _Wave 3 deliverables (Oct 27 – Nov 16) — fill in as they land:_
 - [x] **Preview deployment tooling:** `npm run deploy:preview` deploys the compiled contract with a local proof server and a wallet supplied through an environment variable on the operator's laptop (never committed or printed), seeds a demo issuer + 7 corridors, and records the address in `frontend/src/deployment.json`
 - [x] **Midnight Preview mode in the dApp:** joins the deployed contract through Lace (DApp Connector 4.x) and Midnight.js 4.1 and runs send, claim and auditor disclosure through `callTx`; the Simulator remains as a fallback toggle; clear states for Lace missing, wrong network, no tDUST, proof generation and confirmation; friendly errors only
 - [x] **Auditor disclosure UI:** challenge-bound ownership proof and read-only view key, both sender-controlled
+- [x] **Preview-only test funds:** `mintTestSettlement` (governor-enabled, per-call cap) so any wallet can fund a demo send; clearly labelled Preview-only in code, README and the UI ("Get test funds")
+- [x] Escrow openings carry a real tree index (simulated in the simulator, tested); live release on Preview is an open item documented in the README
 - [x] Tests for deployment loading, backend selection and friendly errors (frontend), alongside the contract suite
 - [ ] Deployed on Midnight **Preview** via Lace (address + tx hashes here: pending the first real deployment run)
 - [ ] Shielded value leg: tDUST/stablecoin moved inside `sendRemittance` / `claim` (`receiveShielded` / `sendShielded`)

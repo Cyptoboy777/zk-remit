@@ -28,6 +28,9 @@ export type LedgerSnapshot = {
   bandVolume: bigint[];
   receipts: ReceiptView[];
   ownershipProofs: bigint;
+  /** Preview-only test funds: whether the governor switched them on, and how many mints so far. */
+  testMintEnabled: boolean;
+  testMints: bigint;
 };
 
 export const snapshot = (l: Ledger): LedgerSnapshot => ({
@@ -61,6 +64,8 @@ export const snapshot = (l: Ledger): LedgerSnapshot => ({
     status: r.status,
   })),
   ownershipProofs: l.ownershipProofs.size(),
+  testMintEnabled: l.testMintEnabled,
+  testMints: l.testMints,
 });
 
 export type ShieldedCoin = { nonce: Uint8Array; color: Uint8Array; value: bigint };
@@ -90,6 +95,10 @@ export interface Backend {
   reclaim(as: ZkRemitPrivateState, receiptId: Uint8Array): Promise<{ txHash?: string }>;
   proveReceiptOwnership(as: ZkRemitPrivateState, receiptId: Uint8Array, challenge: Uint8Array): Promise<{ txHash?: string }>;
   ledger(): Promise<LedgerSnapshot>;
+  /** Live backend only: shielded balance of the settlement colour held by the connected wallet. */
+  settlementBalance?(color: Uint8Array): Promise<bigint>;
+  /** Preview-only test funds (live backend only). */
+  mintTestFunds?(amountCents: bigint): Promise<{ txHash?: string }>;
   /** Simulator-only: access private escrows for claim-link demos. */
   getEscrow?(receiptId: Uint8Array): { coin: ShieldedCoin & { mt_index: bigint }; salt: Uint8Array } | undefined;
   withEscrow?(as: ZkRemitPrivateState, receiptId: Uint8Array, opening: { coin: ShieldedCoin & { mt_index: bigint }; salt: Uint8Array }): void;

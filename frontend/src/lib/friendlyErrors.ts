@@ -8,6 +8,7 @@ export type Problem =
   | 'no-dust'
   | 'no-settlement'
   | 'operator-key'
+  | 'escrow-index'
   | 'rejected'
   | 'proof'
   | 'network'
@@ -48,6 +49,10 @@ const COPY: Record<Exclude<Problem, 'contract'>, { title: string; body: string }
   'operator-key': {
     title: 'Operator keys needed',
     body: 'Issuing a credential needs the operator keys created when the contract was deployed. Import them on the Issuer tab.',
+  },
+  'escrow-index': {
+    title: 'Release is not available yet',
+    body: 'The escrowed funds cannot be released from this app on Preview yet. Nothing was changed by this attempt.',
   },
   rejected: {
     title: 'Request cancelled',

@@ -64,6 +64,9 @@ export const defaultPolicy = (overrides: Partial<CorridorPolicy> = {}): Corridor
   ...overrides,
 });
 
+/** Per-call cap of mintTestSettlement, in cents. Must equal the literal in zk-remit.compact (a test checks it). */
+export const TEST_MINT_CAP_CENTS = 100_000n;
+
 export const freshCoin = (valueCents: bigint, color: Uint8Array = SETTLEMENT_COLOR) => ({
   nonce: randomBytes(),
   color: new Uint8Array(color),
@@ -74,6 +77,12 @@ export class ZkRemitSimulator {
   readonly contract: Contract<ZkRemitPrivateState>;
   circuitContext: CircuitContext<ZkRemitPrivateState>;
   readonly settlementColor: Uint8Array;
+  /**
+   * Simulated position of the next escrow coin in the coin tree. The real chain assigns the index
+   * when the transaction is applied; here each escrow takes the next slot so tests exercise a
+   * non-zero index end to end.
+   */
+  private nextEscrowIndex = 0n;
 
   constructor(governorSecret: Uint8Array, settlementColor: Uint8Array = SETTLEMENT_COLOR) {
     this.settlementColor = new Uint8Array(settlementColor);
@@ -135,6 +144,22 @@ export class ZkRemitSimulator {
     return this.ledger;
   }
 
+  /** Governor only. Preview/test deployments only. */
+  enableTestMint(): Ledger {
+    this.circuitContext = this.contract.impureCircuits.enableTestMint(this.circuitContext).context;
+    return this.ledger;
+  }
+
+  /** Preview-only test funds: mints shielded settlement tokens to the caller, capped per call. */
+  mintTestSettlement(amount: bigint, nonce: Uint8Array = randomBytes()): Ledger {
+    this.circuitContext = {
+      ...this.circuitContext,
+      currentPrivateState: { ...this.circuitContext.currentPrivateState, mintNonceValue: nonce },
+    };
+    this.circuitContext = this.contract.impureCircuits.mintTestSettlement(this.circuitContext, amount).context;
+    return this.ledger;
+  }
+
   sendRemittance(
     to: bigint,
     slot: bigint,
@@ -151,7 +176,7 @@ export class ZkRemitSimulator {
     this.circuitContext = r.context;
     const id = r.result;
     const opening: EscrowRecord = {
-      coin: { nonce: coin.nonce, color: coin.color, value: coin.value, mt_index: 0n },
+      coin: { nonce: coin.nonce, color: coin.color, value: coin.value, mt_index: this.nextEscrowIndex++ },
       salt,
     };
     const escrows = { ...(this.circuitContext.currentPrivateState.escrows ?? {}), [toHex(id)]: opening };

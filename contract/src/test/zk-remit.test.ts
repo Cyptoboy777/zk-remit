@@ -10,6 +10,7 @@ import {
   SETTLEMENT_COLOR,
   defaultPolicy,
   freshCoin,
+  TEST_MINT_CAP_CENTS,
 } from '../simulator.js';
 import type { ZkRemitPrivateState } from '../witnesses.js';
 
@@ -234,5 +235,135 @@ describe('ZK Remit Wave 3 contract', () => {
     expect(disclosed.toCountry).toBe(608);
     expect(disclosed.amountBand).toBe(1);
     expect(['PENDING', 0, ReceiptStatus.PENDING]).toContain(disclosed.status);
+  });
+});
+
+describe('Preview-only test funds (mintTestSettlement)', () => {
+  const governorSecret = randomBytes();
+  let sim: ZkRemitSimulator;
+
+  beforeEach(() => {
+    sim = new ZkRemitSimulator(governorSecret);
+  });
+
+  it('is disabled by default, so a production deployment cannot mint', () => {
+    expect(sim.ledger.testMintEnabled).toBe(false);
+    expect(() => sim.as({ governorSecret }).mintTestSettlement(100n)).toThrow(/not enabled on this deployment/);
+    expect(sim.ledger.testMints).toBe(0n);
+  });
+
+  it('only the governor can enable it', () => {
+    expect(() => sim.as({ governorSecret: randomBytes() }).enableTestMint()).toThrow(/not the governor/);
+    sim.as({ governorSecret }).enableTestMint();
+    expect(sim.ledger.testMintEnabled).toBe(true);
+  });
+
+  it('any wallet can mint once enabled; the first mint records the settlement colour', () => {
+    sim.as({ governorSecret }).enableTestMint();
+    expect(toHex(sim.ledger.settlementColor)).toBe(toHex(SETTLEMENT_COLOR));
+    // A caller who is not the governor can mint.
+    sim.as({ governorSecret: randomBytes() }).mintTestSettlement(2_500n);
+    expect(sim.ledger.testMints).toBe(1n);
+    const minted = toHex(sim.ledger.settlementColor);
+    expect(minted).not.toBe(toHex(SETTLEMENT_COLOR));
+    sim.mintTestSettlement(10n);
+    expect(sim.ledger.testMints).toBe(2n);
+    expect(toHex(sim.ledger.settlementColor)).toBe(minted); // stable across mints
+  });
+
+  it('enforces the per-call cap and rejects zero', () => {
+    sim.as({ governorSecret }).enableTestMint();
+    expect(() => sim.mintTestSettlement(0n)).toThrow(/amount must be positive/);
+    expect(() => sim.mintTestSettlement(TEST_MINT_CAP_CENTS + 1n)).toThrow(/per-call cap/);
+    sim.mintTestSettlement(TEST_MINT_CAP_CENTS); // exactly the cap is allowed
+    expect(sim.ledger.testMints).toBe(1n);
+  });
+
+  it('sendRemittance accepts the minted token and rejects the old placeholder colour', () => {
+    const issuerSecret = randomBytes();
+    const issuerPk = pureCircuits.issuerPublicKey(issuerSecret);
+    sim.as({ governorSecret }).addIssuer(issuerPk);
+    sim.setCorridorPolicy(COUNTRY.UAE, COUNTRY.PHILIPPINES, defaultPolicy());
+    const holderSecret = randomBytes();
+    const credential = makeCredential(holderSecret, issuerPk, TIER.VERIFIED, COUNTRY.UAE, 3n);
+    sim.as({ issuerSecret }).issueCredential(pureCircuits.credentialCommitment(credential));
+    const tag = pureCircuits.recipientTagOf(randomBytes());
+
+    sim.as({ governorSecret }).enableTestMint();
+    sim.mintTestSettlement(5_000n);
+    const mintedColor = sim.ledger.settlementColor;
+
+    sim.as({ holderSecret, credential });
+    expect(() => sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, tag, freshCoin(usd(10)))).toThrow(
+      /wrong settlement token/,
+    ); // freshCoin defaults to the old placeholder colour
+    sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, tag, freshCoin(usd(10), mintedColor));
+    expect(sim.ledger.totalReceipts).toBe(1n);
+  });
+});
+
+describe('real escrow tree index (mt_index)', () => {
+  const governorSecret = randomBytes();
+  let sim: ZkRemitSimulator;
+  let alice: ZkRemitPrivateState;
+  let bobSecret: Uint8Array;
+  let bobTag: Uint8Array;
+
+  beforeEach(() => {
+    sim = new ZkRemitSimulator(governorSecret);
+    const issuerSecret = randomBytes();
+    const issuerPk = pureCircuits.issuerPublicKey(issuerSecret);
+    sim.as({ governorSecret }).addIssuer(issuerPk);
+    sim.setCorridorPolicy(COUNTRY.UAE, COUNTRY.PHILIPPINES, defaultPolicy());
+    const aliceSecret = randomBytes();
+    const credential = makeCredential(aliceSecret, issuerPk, TIER.VERIFIED, COUNTRY.UAE, 3n);
+    sim.as({ issuerSecret }).issueCredential(pureCircuits.credentialCommitment(credential));
+    alice = { holderSecret: aliceSecret, credential };
+    bobSecret = randomBytes();
+    bobTag = pureCircuits.recipientTagOf(bobSecret);
+    sim.as(alice);
+  });
+
+  it('each escrow opening carries its own, increasing tree index (not a hard-coded 0)', () => {
+    const id1 = sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(10)));
+    const id2 = sim.sendRemittance(COUNTRY.PHILIPPINES, 1n, bobTag, freshCoin(usd(20)));
+    const e = sim.privateState.escrows!;
+    expect(e[toHex(id1)].coin.mt_index).toBe(0n);
+    expect(e[toHex(id2)].coin.mt_index).toBe(1n);
+  });
+
+  it('claim spends with the real non-zero index, and the commitment ignores the index', () => {
+    sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(10)));
+    const id2 = sim.sendRemittance(COUNTRY.PHILIPPINES, 1n, bobTag, freshCoin(usd(25)));
+    const id3 = sim.sendRemittance(COUNTRY.PHILIPPINES, 2n, bobTag, freshCoin(usd(35)));
+    const o2 = sim.privateState.escrows![toHex(id2)];
+    const o3 = sim.privateState.escrows![toHex(id3)];
+    expect(o2.coin.mt_index).toBe(1n);
+
+    // Real, non-zero index straight from the opening.
+    sim.as({ recipientSecret: bobSecret }).withEscrow(id2, o2).claim(id2);
+    expect(sim.ledger.receipts.lookup(id2).status).toBe(ReceiptStatus.CLAIMED);
+
+    // The index is not bound at send time, so a different index must not break the commitment check.
+    sim.as({ recipientSecret: bobSecret }).withEscrow(id3, { ...o3, coin: { ...o3.coin, mt_index: 41n } }).claim(id3);
+    expect(sim.ledger.receipts.lookup(id3).status).toBe(ReceiptStatus.CLAIMED);
+  });
+
+  it('the commitment still binds nonce, value and salt', () => {
+    const id = sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(25)));
+    const opening = sim.privateState.escrows![toHex(id)];
+    sim.as({ recipientSecret: bobSecret }).withEscrow(id, { ...opening, coin: { ...opening.coin, value: opening.coin.value + 1n } });
+    expect(() => sim.claim(id)).toThrow(/escrow opening does not match/);
+  });
+
+  it('reclaim also works with a non-zero index', () => {
+    sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(10)));
+    const id = sim.sendRemittance(COUNTRY.PHILIPPINES, 1n, bobTag, freshCoin(usd(30)));
+    const opening = sim.privateState.escrows![toHex(id)];
+    expect(opening.coin.mt_index).toBe(1n);
+    sim.as({ governorSecret }).advanceEpoch();
+    sim.advanceEpoch(); // epoch 3: claim window (2) has passed
+    sim.as(alice).withEscrow(id, opening).reclaim(id);
+    expect(sim.ledger.receipts.lookup(id).status).toBe(ReceiptStatus.REFUNDED);
   });
 });

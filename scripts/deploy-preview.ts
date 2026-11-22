@@ -10,6 +10,8 @@
  * Needs: a local proof server on http://localhost:6300, a wallet funded with tNIGHT that has
  * generated tDUST, and the contract compiled with keys (npm run compact).
  *
+ * Flags: --no-seed (deploy only), --no-test-mint (do not enable Preview-only test funds).
+ *
  * Writes:
  *   frontend/src/deployment.json   { network, contractAddress, deployedAt }   (public, committed)
  *   scripts/.local/operator.json   governor + demo-issuer keys                 (private, gitignored)
@@ -272,6 +274,11 @@ const main = async () => {
   for (const [from, to] of DEMO_CORRIDORS) {
     await deployed.callTx.setCorridorPolicy(from, to, defaultPolicy());
     say(`  corridor ${++n}/${DEMO_CORRIDORS.length}`);
+  }
+  if (!process.argv.includes('--no-test-mint')) {
+    // PREVIEW ONLY: lets any wallet mint demo settlement funds (capped per call). Skip with --no-test-mint.
+    await deployed.callTx.enableTestMint();
+    say('  Preview test funds enabled (any wallet can mint a capped amount of demo settlement tokens).');
   }
   say('Seeded. Operator keys were saved to scripts/.local/operator.json (private, gitignored, not printed).');
 };

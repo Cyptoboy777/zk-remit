@@ -7,6 +7,7 @@ import {
   randomBytes,
   toHex,
   SETTLEMENT_COLOR,
+  TEST_MINT_CAP_CENTS,
   defaultPolicy,
   freshCoin,
   ReceiptStatus,
@@ -151,6 +152,8 @@ export default function App() {
   const [operatorBad, setOperatorBad] = useState(false);
   const live = mode === 'preview' && conn.status === 'ready';
   const canAct = mode === 'simulator' || live;
+
+  const [balance, setBalance] = useState<bigint | null>(null);
 
   const refresh = useCallback(async () => {
     if (mode === 'preview' && !live) { setSnap(null); return; }
@@ -303,10 +306,26 @@ export default function App() {
     [snap, toCountry, cents],
   );
 
+  // Shielded balance of the settlement token (Preview only). Refreshes with every ledger refresh.
+  useEffect(() => {
+    if (!live || !snap || !backend.settlementBalance) { setBalance(null); return; }
+    let stale = false;
+    backend.settlementBalance(fromHex(snap.settlementColor)).then((b) => { if (!stale) setBalance(b); }, () => { if (!stale) setBalance(null); });
+    return () => { stale = true; };
+  }, [live, snap, backend]);
+
+  const doMint = () =>
+    run('Get test funds', async () => {
+      const r = await backend.mintTestFunds!(TEST_MINT_CAP_CENTS);
+      confirmed('Test funds added', 'Preview test funds were minted to your wallet. They are not real money. It can take a moment to show in your balance.', r.txHash);
+      return 'Minted Preview test funds';
+    });
+
   const doSend = () =>
     run(t(locale, 'send'), async () => {
       if (!personas.sender.credential) throw new Error('Seed the demo first (issuer + credential).');
-      const coin = freshCoin(BigInt(cents), SETTLEMENT_COLOR);
+      // On Preview the contract records the real settlement colour on the first test mint; use it.
+      const coin = freshCoin(BigInt(cents), live && snap ? fromHex(snap.settlementColor) : SETTLEMENT_COLOR);
       const tag = pureCircuits.recipientTagOf(personas.recipient.recipientSecret!);
       // The receipt id is the nullifier, so a slot is free when its nullifier is not on the ledger yet.
       const used = new Set(receipts.map((r) => r.id));
@@ -579,6 +598,25 @@ export default function App() {
                 <button type="button" className="btn primary" onClick={() => void seedDemo()} disabled={!!busy || !canAct}>
                   {busy ?? (mode === 'preview' ? 'Issue my credential' : t(locale, 'setup'))}
                 </button>
+              )}
+
+              {live && (
+                <section className="card funds-card" aria-label="Preview test funds">
+                  <p className="eyebrow">Preview test funds</p>
+                  <p>
+                    Your balance: <strong>{balance === null ? '…' : `$${(Number(balance) / 100).toFixed(2)}`}</strong>
+                  </p>
+                  {balance === 0n && (snap?.testMintEnabled ? (
+                    <>
+                      <p className="fine">Sending needs settlement tokens. Test funds exist on Midnight Preview only and are not real money.</p>
+                      <button type="button" className="btn primary" disabled={!!busy} onClick={() => void doMint()}>
+                        Get test funds
+                      </button>
+                    </>
+                  ) : (
+                    <p className="fine">This wallet holds no settlement tokens, and test funds are not enabled on this deployment.</p>
+                  ))}
+                </section>
               )}
 
               <div className="field-grid">

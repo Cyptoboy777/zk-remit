@@ -18,6 +18,8 @@ export type ZkRemitPrivateState = {
   readonly recipientSecret?: Uint8Array;
   /** Salt used for the most recent sendRemittance escrow commitment. */
   readonly escrowSaltValue?: Uint8Array;
+  /** Fresh random nonce for the next mintTestSettlement coin (Preview-only test funds). */
+  readonly mintNonceValue?: Uint8Array;
   /** receiptId hex -> opening retained for claim/reclaim. */
   readonly escrows?: Record<string, EscrowRecord>;
 };
@@ -67,6 +69,10 @@ export const witnesses = {
   escrowSalt: ({ privateState }: Ctx): [ZkRemitPrivateState, Uint8Array] => [
     privateState,
     need(privateState.escrowSaltValue, 'escrowSaltValue'),
+  ],
+  mintNonce: ({ privateState }: Ctx): [ZkRemitPrivateState, Uint8Array] => [
+    privateState,
+    need(privateState.mintNonceValue, 'mintNonceValue'),
   ],
   escrowOpening: ({ privateState }: Ctx, receiptId: Uint8Array): [ZkRemitPrivateState, EscrowOpening] => {
     const rec = need(privateState.escrows, 'escrows')[toHex(receiptId)];

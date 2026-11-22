@@ -89,7 +89,9 @@ Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview.
 4. **Send:** pick a corridor and amount. Proof generation takes up to about a minute; Lace asks you to approve.
 5. **Claim:** open the claim link / QR (ideally with a second Lace wallet). **Auditor tab:** prove ownership of a receipt to an auditor challenge, or share a read-only view key.
 
-Known prerequisite: `sendRemittance` escrows a **shielded settlement token** (`settlementColor`). The Preview faucet only issues unshielded tNIGHT, so a wallet must hold that shielded token for the escrow leg to run; otherwise the app shows "No settlement tokens in your wallet" and sends nothing. Everything else (deploy, issuer, corridors, credentials, ledger reads) does not need it.
+**Test funds (Preview only).** `sendRemittance` escrows a shielded settlement token and the Preview faucet only issues unshielded tNIGHT, so the contract has a **Preview-only** `mintTestSettlement(amount)` circuit (capped at 1000.00 per call). It is inert unless the governor calls `enableTestMint()`, which `deploy:preview` does and a production deployment never would. In the app, the Send screen shows **Get test funds** when your settlement balance is 0. The first mint records the minted token's colour as the settlement colour; those tokens are demo tokens, not money.
+
+**Open item: releasing escrow on a live network.** Spending an escrowed coin needs its real position (`mt_index`) in the chain's coin tree, which only exists after the send transaction is applied, so the commitment deliberately ignores it and `claim`/`reclaim` spend with the index carried in the escrow opening. The simulator assigns each escrow a simulated index (tested). On Preview no documented API returns that index for a contract-held coin, and the documented route (the contract storing the coin with `writeCoin`) would publish the exact amount. Until this is decided, live **claim/reclaim stop with "Release is not available yet" before any proof or fee**; deploy, issuer, corridors, credentials, test funds, send and the auditor flow are unaffected.
 
 **We never invent contract addresses, transactions or users.**
 
