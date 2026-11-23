@@ -51,8 +51,8 @@ const COPY: Record<Exclude<Problem, 'contract'>, { title: string; body: string }
     body: 'Issuing a credential needs the operator keys created when the contract was deployed. Import them on the Issuer tab.',
   },
   'escrow-index': {
-    title: 'Release is not available yet',
-    body: 'The escrowed funds cannot be released from this app on Preview yet. Nothing was changed by this attempt.',
+    title: 'Transfer still confirming',
+    body: 'The network has not finished recording this transfer yet. Wait a minute and try again. Nothing was changed.',
   },
   rejected: {
     title: 'Request cancelled',

@@ -18,7 +18,7 @@
  * --no-test-mint (do not enable Preview-only test funds).
  *
  * Writes:
- *   frontend/src/deployment.json   { network, contractAddress, deployedAt }   (public, committed)
+ *   frontend/src/deployment.json   { network, contractAddress, deployedAt, deployTxHash, seedTxs }   (public, committed)
  *   scripts/.local/operator.json   governor + demo-issuer keys                 (private, gitignored)
  *
  * NOTE: the wallet-sdk wiring below follows Midnight's published deploy guides for wallet-sdk 1.2 /
@@ -285,6 +285,14 @@ const main = async () => {
     args: [governorPk, SETTLEMENT_COLOR],
   } as any);
   const contractAddress: string = deployed.deployTxData.public.contractAddress;
+  const txOf = (r: any): string => (typeof r?.public?.txHash === 'string' ? r.public.txHash : '');
+  const deployTxHash = txOf(deployed.deployTxData);
+  const seedTxs: string[] = [];
+  const record = () =>
+    writeFileSync(
+      DEPLOYMENT_JSON,
+      JSON.stringify({ network: NETWORK_ID, contractAddress, deployedAt: new Date().toISOString(), deployTxHash, seedTxs }, null, 2) + '\n',
+    );
 
   // Persist right away so a failure while seeding never loses the address or the governor key.
   mkdirSync(LOCAL_DIR, { recursive: true });
@@ -294,26 +302,29 @@ const main = async () => {
     JSON.stringify({ contractAddress, governorSecret: toHex(governorSecret), issuerSecret: toHex(issuerSecret) }, null, 2),
   );
   chmodSync(operatorFile, 0o600);
-  writeFileSync(
-    DEPLOYMENT_JSON,
-    JSON.stringify({ network: NETWORK_ID, contractAddress, deployedAt: new Date().toISOString() }, null, 2) + '\n',
-  );
+  record();
 
-  say(`\nCONTRACT ADDRESS: ${contractAddress}\n`);
+  say(`\nCONTRACT ADDRESS: ${contractAddress}`);
+  if (deployTxHash) say(`DEPLOY TX: ${deployTxHash}`);
+  say('');
 
   if (process.argv.includes('--no-seed')) return;
 
   say('Seeding: registering a demo issuer and 7 corridors (one transaction each)…');
-  await deployed.callTx.addIssuer(issuerPk);
+  const seeded = (label: string, r: any) => {
+    const h = txOf(r);
+    if (h) seedTxs.push(h);
+    record();
+    say(`  ${label}${h ? `  tx ${h}` : ''}`);
+  };
+  seeded('demo issuer registered', await deployed.callTx.addIssuer(issuerPk));
   let n = 0;
   for (const [from, to] of DEMO_CORRIDORS) {
-    await deployed.callTx.setCorridorPolicy(from, to, defaultPolicy());
-    say(`  corridor ${++n}/${DEMO_CORRIDORS.length}`);
+    seeded(`corridor ${++n}/${DEMO_CORRIDORS.length}`, await deployed.callTx.setCorridorPolicy(from, to, defaultPolicy()));
   }
   if (!process.argv.includes('--no-test-mint')) {
     // PREVIEW ONLY: lets any wallet mint demo settlement funds (capped per call). Skip with --no-test-mint.
-    await deployed.callTx.enableTestMint();
-    say('  Preview test funds enabled (any wallet can mint a capped amount of demo settlement tokens).');
+    seeded('Preview test funds enabled', await deployed.callTx.enableTestMint());
   }
   say('Seeded. Operator keys were saved to scripts/.local/operator.json (private, gitignored, not printed).');
 };

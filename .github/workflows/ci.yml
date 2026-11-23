@@ -2,7 +2,7 @@ name: CI — compile Compact, test, build
 
 on:
   push:
-    branches: [main, testnet-live]
+    branches: [main, testnet-live, wave3-top]
   pull_request:
 
 jobs:

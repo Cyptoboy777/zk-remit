@@ -32,6 +32,7 @@ import { snapshot } from './types';
 import { browserPrivateStateProvider } from './privateStateProvider';
 import { fromHex } from './codec';
 import { MidnightProblem } from './friendlyErrors';
+import { findEscrowIndex } from './escrowIndex';
 import type { Deployment } from './deployment';
 
 export type Stage = 'connecting' | 'proving' | 'confirmed';
@@ -227,8 +228,8 @@ export class MidnightBackend implements Backend {
     const receiptId = tx?.private?.result as Uint8Array | undefined;
     if (!(receiptId instanceof Uint8Array)) throw new MidnightProblem('unknown');
     // The recipient needs this opening (via the claim link); keep it in this device's private state too.
-    // mt_index 0n is a placeholder only: the commitment ignores it, and claim/reclaim replace it with the
-    // real index from resolveEscrowIndex() before spending.
+    // mt_index is unknown until the send tx is applied; claim/reclaim fill in the real one from chain
+    // state (resolveEscrowIndex) right before spending. The commitment does not cover it.
     this.escrows.set(toHex(receiptId), { coin: { ...coin, mt_index: 0n }, salt: escrowSaltValue });
     await this.setPrivate(as);
     return { receiptId, txHash: MidnightBackend.txHash(tx) };
@@ -245,18 +246,19 @@ export class MidnightBackend implements Backend {
   }
 
   /**
-   * The real position of an escrow coin in the chain's coin tree, which spending it requires.
-   *
-   * OPEN ITEM. No documented API returns this for a coin held by a contract, and the one documented
-   * route (the contract storing the coin with writeCoin) publishes the exact amount, which this app
-   * promises not to do. Until that is decided this fails safe before any proof or fee, instead of
-   * guessing an index. The simulator is unaffected: it carries a simulated index in the opening.
+   * The real position (mt_index) of an escrow coin in Zswap's coin-commitment tree, which spending it
+   * requires. Read from the indexer's Zswap state for this contract by matching the coin commitment,
+   * so the exact amount is never published. Fails safe (before any proof or fee) if the chain does not
+   * hold the coin yet, e.g. the send is still confirming.
    */
-  private async resolveEscrowIndex(_coin: ShieldedCoin): Promise<bigint> {
-    throw new MidnightProblem('escrow-index');
+  private async resolveEscrowIndex(coin: ShieldedCoin): Promise<bigint> {
+    const res = await this.providers.publicDataProvider.queryZSwapAndContractState(this.contractAddress);
+    const idx = res ? findEscrowIndex(res[0], coin, this.contractAddress) : undefined;
+    if (idx === undefined) throw new MidnightProblem('escrow-index');
+    return idx;
   }
 
-  /** Swaps the placeholder index in a stored opening for the real one. */
+  /** Fills the real tree index into a stored opening (send time cannot know it). */
   private async withRealIndex(id: Uint8Array) {
     const key = toHex(id);
     const opening = this.escrows.get(key);

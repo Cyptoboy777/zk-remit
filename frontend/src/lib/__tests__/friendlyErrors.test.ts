@@ -8,7 +8,7 @@ describe('friendly errors', () => {
     expect(friendlyError(new MidnightProblem('no-dust')).body).toMatch(/tDUST/);
     expect(friendlyError(new MidnightProblem('no-settlement')).title).toMatch(/settlement/i);
     expect(friendlyError(new MidnightProblem('operator-key')).body).toMatch(/Issuer tab/);
-    expect(friendlyError(new MidnightProblem('escrow-index')).title).toMatch(/Release is not available/);
+    expect(friendlyError(new MidnightProblem('escrow-index')).title).toMatch(/still confirming/);
   });
 
   it('passes through only the contract rule text', () => {

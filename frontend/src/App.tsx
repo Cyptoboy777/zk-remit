@@ -25,6 +25,8 @@ import { buildClaimHash, parseClaimHash, qrDataUrl, type ClaimPayload } from './
 import { LOCALES, t, type Locale } from './lib/i18n';
 import { decode, encode, fromHex } from './lib/codec';
 import PrivacySimulator from './privacy/PrivacySimulator';
+import { ChainReadback } from './ui/ChainReadback';
+import { ClaimGuide } from './ui/ClaimGuide';
 import { CorridorFlags, Flag } from './ui/flags';
 import { ActivityList, statusOf } from './ui/ActivityList';
 import AuditPanel from './ui/AuditPanel';
@@ -155,9 +157,11 @@ export default function App() {
 
   const [balance, setBalance] = useState<bigint | null>(null);
 
+  const [readAt, setReadAt] = useState<Date | null>(null);
   const refresh = useCallback(async () => {
-    if (mode === 'preview' && !live) { setSnap(null); return; }
+    if (mode === 'preview' && !live) { setSnap(null); setReadAt(null); return; }
     setSnap(await backend.ledger());
+    setReadAt(new Date());
   }, [backend, mode, live]);
   useEffect(() => { void refresh().catch(() => undefined); }, [refresh]);
   useEffect(() => {
@@ -380,7 +384,7 @@ export default function App() {
           nonce: fromHex(payload.coin.nonce),
           color: fromHex(payload.coin.color),
           value: BigInt(payload.coin.value),
-          mt_index: 0n,
+          mt_index: 0n, // resolved from chain state by the backend before spending
         },
         salt: fromHex(payload.salt),
       };
@@ -684,6 +688,9 @@ export default function App() {
               </ul>
               <p className="fine">Protected by Midnight zero-knowledge proofs. Anonymity set k≈{anon.k} · {t(locale, `risk_${anon.risk}` as 'risk_low')}</p>
             </aside>
+            {sent[0] && (
+              <ChainReadback receipt={receipts.find((r) => r.id === sent[0].id)} source={mode === 'preview' ? 'preview' : 'simulator'} readAt={readAt} iso2={iso2of} />
+            )}
             <ActivityList receipts={receipts} iso2={iso2of} limit={4} onViewAll={() => go('activity')} />
           </section>
         )}
@@ -699,6 +706,15 @@ export default function App() {
                     ? 'Your sender shared a secure claim link. Verify, then unseal.'
                     : 'Send a transfer first, or open a claim link from the sender.'}
                 </p>
+                {claimPayload && (
+                  <ClaimGuide
+                    onLedger={!!waitingReceipt}
+                    checked={!!readAt}
+                    walletReady={mode === 'simulator' || live}
+                    simulator={mode === 'simulator'}
+                    claimed={unsealed}
+                  />
+                )}
                 {waiting && (
                   <div className={`unseal-card ${unsealed ? 'open' : ''}`}>
                     <p className="eyebrow accent">
@@ -723,6 +739,8 @@ export default function App() {
                   </div>
                 )}
               </div>
+              <div className="claim-side">
+              {waiting && <ChainReadback receipt={waitingReceipt} source={mode === 'preview' ? 'preview' : 'simulator'} readAt={readAt} iso2={iso2of} />}
               <aside className="qr-card">
                 <p className="eyebrow">Secure claim link</p>
                 {sent[0]?.qr ? (
@@ -735,6 +753,7 @@ export default function App() {
                   <p className="muted">A QR code appears here after you send a transfer in this session.</p>
                 )}
               </aside>
+              </div>
             </section>
             <ActivityList receipts={receipts} iso2={iso2of} limit={5} onViewAll={() => go('activity')} />
           </>
@@ -829,6 +848,7 @@ export default function App() {
               <section className="card disclose-card">
                 <h2>Public on the ledger</h2>
                 <span className="pill">Protocol default</span>
+                <p className="fine muted">{mode === 'preview' ? 'Read from Midnight Preview' : 'Read from the simulator ledger'}{readAt ? ` · ${readAt.toLocaleTimeString()}` : ''}</p>
                 {receipts[0] ? (
                   <dl className="audit-dl">
                     <div><dt>Corridor</dt><dd><CorridorFlags from={iso2of(receipts[0].fromCountry)} to={iso2of(receipts[0].toCountry)} /></dd></div>
@@ -906,7 +926,6 @@ export default function App() {
                 </tr>
               </tbody>
             </table>
-            <p className="fine">Compare: <code>github.com/Cyptoboy777/zk-remit/compare/wave2-baseline...wave3</code></p>
           </section>
         )}
 

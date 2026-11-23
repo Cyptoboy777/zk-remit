@@ -10,12 +10,12 @@ recipient stay private. The recipient claims with a claim link / QR; the sender 
 the corridor’s claim window.
 
 - **Live demo (GitHub Pages):** https://cyptoboy777.github.io/zk-remit/
-- **Midnight Preview contract:** _not deployed yet_. After `npm run deploy:preview` the address is recorded in [`frontend/src/deployment.json`](frontend/src/deployment.json) and shown in the app. Until then the app runs in Simulator mode and says so.
+- **Midnight Preview contract:** see [Deployment](#deployment-midnight-preview) below. The address is recorded in [`frontend/src/deployment.json`](frontend/src/deployment.json) and the app switches to it automatically. Until then the app runs in Simulator mode and says so.
+- **Deploy guide (laptop):** [`docs/DEPLOY_PREVIEW.md`](docs/DEPLOY_PREVIEW.md)
 - **Contract:** [`contract/src/zk-remit.compact`](contract/src/zk-remit.compact)
 - **Tests:** `npm test -w contract` (Compact runtime simulator)
 - **Privacy Simulator:** original in-app tour — shielded vs disclosed language, proof-bloom moment, cinematic camera, 60fps quality tiers, reduced-motion / WebGL 2D fallback, **EN/ES/PT/ZH/FR** (model-driven; not a teardown clone)
-- **Baseline tag:** `wave2-baseline` · **Wave 3 branch:** `wave3`
-- **Compare:** https://github.com/Cyptoboy777/zk-remit/compare/wave2-baseline...wave3
+- **Baseline tag:** `wave2-baseline`
 
 ## Wave 3 changelog
 
@@ -42,6 +42,40 @@ the corridor’s claim window.
 | 6 | Amount ≤ tier cap for corridor | exact amount | band only |
 | 7 | Epoch quota / nullifier fresh | slot↔holder | nullifier |
 | 8 | Shielded coin escrowed | coin nonce | escrow commitment |
+
+## What stays private / what is public
+
+Midnight runs two ledgers side by side, and ZK Remit uses both on purpose.
+
+**Public ledger (contract state, readable by anyone through the indexer):** `governorPk`, the issuer tree root (`activeIssuers`), the credential tree root (`credentials`), `revokedIssuers`, `corridorPolicy`, `epoch`, `nullifiers`, and one `Receipt` per transfer holding only corridor (from/to country), amount band, epoch, an escrow commitment, a recipient tag, a view tag and a status (PENDING / CLAIMED / REFUNDED). Counters (`totalReceipts`, `claimedCount`, `refundedCount`, `bandVolume`) are aggregates.
+
+**Shielded ledger (Zswap):** the settlement value itself. `sendRemittance` takes custody with `receiveShielded`, `claim`/`reclaim` pay out with `sendShielded`. The chain stores only a coin commitment and, when spent, a nullifier. The coin's nonce and exact value never appear in contract state.
+
+**Private state (on the user's device only, fed to circuits through witnesses):**
+
+| Witness | What it holds | How it is bound on chain |
+|---|---|---|
+| `holderSecret` | sender's secret key | `holderPublicKey` must equal `credential.holderPk`; derives the nullifier and view key |
+| `heldCredential` | tier, country, issuer, expiry, salt | `persistentHash` leaf proven in `credentials` via `credentialPath` |
+| `issuerPath` / `credentialPath` | Merkle paths | `merkleTreePathRoot` checked against the historic roots |
+| `recipientSecret` | recipient's claim secret (travels in the claim link) | `recipientTagOf(secret)` must equal the receipt's `recipientTag` |
+| `escrowSalt` / `escrowOpening` | coin opening + salt, including the coin's real tree index | `persistentCommit` must equal the receipt's `escrowCommit` |
+| `governorSecret` / `issuerSecret` | operator keys | hashed and compared with `governorPk` / issuer tree |
+
+**The escrow tree index (`mt_index`).** Spending a contract-held coin needs its position in Zswap's global coin tree, which only exists after the send transaction is applied. So the escrow commitment binds nonce, colour and value only, and `claim`/`reclaim` receive the real index in the opening. The app resolves it right before spending: it recomputes the coin commitment for (coin, this contract) and finds that leaf in the Zswap state the indexer returns for the contract ([`frontend/src/lib/escrowIndex.ts`](frontend/src/lib/escrowIndex.ts), tested against the real ledger WASM). Storing the coin with `writeCoin` would have given the index for free, but it publishes the exact amount, so we did not.
+
+**Selective disclosure.** A sender can prove to an auditor that a given receipt is theirs (`proveReceiptOwnership`, bound to the auditor's challenge) or share a read-only view key, without revealing anything else.
+
+## Who pays (business model)
+
+ZK Remit is infrastructure for licensed remittance operators (money transfer operators, e-money issuers, remittance-focused fintechs) on corridors such as UAE to Philippines, USA to Mexico, Saudi Arabia to Pakistan and UK to Nigeria.
+
+- **Operators pay**, not senders directly: a small per-transfer protocol fee (a fraction of the operator's own fee) for compliant private settlement, plus a per-credential fee when their KYC desk issues an attestation that the user can reuse.
+- **Why an operator would:** they already pay for KYC and transaction monitoring. ZK Remit lets them prove limits and corridor rules on chain while keeping customer data off it, which lowers data-breach exposure and makes cross-operator credential reuse possible.
+- **Auditors and regulators** get read access to public receipt fields and consent-based disclosure, which is what a partner integration needs to clear compliance review.
+- **Partner path:** start with one licensed operator on one corridor in a sandbox, issuing credentials from its existing KYC flow, then add corridors through `setCorridorPolicy`.
+
+Honest status: there are no partners, users or revenue yet. This section describes the intended model, not traction.
 
 ## Toolchain (ledger 8 / public nets)
 
@@ -96,9 +130,21 @@ Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview.
 
 **Test funds (Preview only).** `sendRemittance` escrows a shielded settlement token and the Preview faucet only issues unshielded tNIGHT, so the contract has a **Preview-only** `mintTestSettlement(amount)` circuit (capped at 1000.00 per call). It is inert unless the governor calls `enableTestMint()`, which `deploy:preview` does and a production deployment never would. In the app, the Send screen shows **Get test funds** when your settlement balance is 0. The first mint records the minted token's colour as the settlement colour; those tokens are demo tokens, not money.
 
-**Open item: releasing escrow on a live network.** Spending an escrowed coin needs its real position (`mt_index`) in the chain's coin tree, which only exists after the send transaction is applied, so the commitment deliberately ignores it and `claim`/`reclaim` spend with the index carried in the escrow opening. The simulator assigns each escrow a simulated index (tested). On Preview no documented API returns that index for a contract-held coin, and the documented route (the contract storing the coin with `writeCoin`) would publish the exact amount. Until this is decided, live **claim/reclaim stop with "Release is not available yet" before any proof or fee**; deploy, issuer, corridors, credentials, test funds, send and the auditor flow are unaffected.
+**Releasing escrow on Preview.** Claim and reclaim resolve the escrow coin's real tree index from the indexer right before proving (see "What stays private" above). If the send is still confirming, the app says so and asks the user to try again in a minute; nothing is spent.
 
 **We never invent contract addresses, transactions or users.**
+
+## Deployment (Midnight Preview)
+
+Filled in after the operator deploy (see [`docs/DEPLOY_PREVIEW.md`](docs/DEPLOY_PREVIEW.md)). Nothing here is invented: each value is copied from the deploy script output.
+
+| Item | Value |
+|---|---|
+| Network | Midnight Preview |
+| Contract address | _pending deploy_ |
+| Deploy transaction | _pending deploy_ |
+| Seed transactions (issuer, corridors, test funds) | _pending deploy_ |
+| First end-to-end send / claim | _pending deploy_ |
 
 ## Judge checklist
 
@@ -107,7 +153,7 @@ Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview.
 - [x] Frontend calls circuits and reads ledger snapshot
 - [ ] Deployed Preview address in README (run `npm run deploy:preview`, then add the address here)
 - [x] Privacy table (above) + in-app disclosure preview
-- [x] Apache-2.0 · topic tagging welcome: `midnightntwrk`
+- [x] Apache-2.0 license, public repo, topic `midnightntwrk`
 
 ## License
 

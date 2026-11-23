@@ -367,3 +367,88 @@ describe('real escrow tree index (mt_index)', () => {
     expect(sim.ledger.receipts.lookup(id).status).toBe(ReceiptStatus.REFUNDED);
   });
 });
+
+describe('escrow lifecycle edge cases (Wave 3 QA)', () => {
+  const governorSecret = randomBytes();
+  let sim: ZkRemitSimulator;
+  let alice: ZkRemitPrivateState;
+  let bobSecret: Uint8Array;
+  let bobTag: Uint8Array;
+
+  beforeEach(() => {
+    sim = new ZkRemitSimulator(governorSecret);
+    const issuerSecret = randomBytes();
+    const issuerPk = pureCircuits.issuerPublicKey(issuerSecret);
+    sim.as({ governorSecret }).addIssuer(issuerPk);
+    sim.setCorridorPolicy(COUNTRY.UAE, COUNTRY.PHILIPPINES, defaultPolicy());
+    const aliceSecret = randomBytes();
+    const credential = makeCredential(aliceSecret, issuerPk, TIER.VERIFIED, COUNTRY.UAE, 5n);
+    sim.as({ issuerSecret }).issueCredential(pureCircuits.credentialCommitment(credential));
+    alice = { holderSecret: aliceSecret, credential };
+    bobSecret = randomBytes();
+    bobTag = pureCircuits.recipientTagOf(bobSecret);
+    sim.as(alice);
+  });
+
+  const lastSpent = (s: ZkRemitSimulator) => {
+    const inputs = s.circuitContext.currentZswapLocalState.inputs;
+    return inputs[inputs.length - 1];
+  };
+
+  it('the shielded spend uses exactly the mt_index from the opening', () => {
+    sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(10)));
+    const id = sim.sendRemittance(COUNTRY.PHILIPPINES, 1n, bobTag, freshCoin(usd(40)));
+    const opening = sim.privateState.escrows![toHex(id)];
+    sim.as({ recipientSecret: bobSecret }).withEscrow(id, { ...opening, coin: { ...opening.coin, mt_index: 7331n } }).claim(id);
+    const spent = lastSpent(sim);
+    expect(spent.mt_index).toBe(7331n);
+    expect(spent.value).toBe(usd(40));
+  });
+
+  it('a claimed receipt can never be claimed again or reclaimed by the sender', () => {
+    const id = sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(60)));
+    const opening = sim.privateState.escrows![toHex(id)];
+    sim.as({ recipientSecret: bobSecret }).withEscrow(id, opening).claim(id);
+    expect(() => sim.as({ recipientSecret: bobSecret }).withEscrow(id, opening).claim(id)).toThrow(/already claimed/);
+    sim.as({ governorSecret }).advanceEpoch();
+    sim.advanceEpoch();
+    expect(() => sim.as(alice).withEscrow(id, opening).reclaim(id)).toThrow(/already claimed/);
+    expect(sim.ledger.claimedCount).toBe(1n);
+    expect(sim.ledger.refundedCount).toBe(0n);
+  });
+
+  it('a reclaimed receipt can no longer be claimed by the recipient', () => {
+    const id = sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(60)));
+    const opening = sim.privateState.escrows![toHex(id)];
+    sim.as({ governorSecret }).advanceEpoch();
+    sim.advanceEpoch();
+    sim.as(alice).withEscrow(id, opening).reclaim(id);
+    expect(() => sim.as({ recipientSecret: bobSecret }).withEscrow(id, opening).claim(id)).toThrow(/already claimed/);
+    expect(sim.ledger.refundedCount).toBe(1n);
+  });
+
+  it('only the original sender can reclaim, and unknown receipts are rejected', () => {
+    const id = sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(60)));
+    const opening = sim.privateState.escrows![toHex(id)];
+    sim.as({ governorSecret }).advanceEpoch();
+    sim.advanceEpoch();
+    expect(() => sim.as({ holderSecret: randomBytes() }).withEscrow(id, opening).reclaim(id)).toThrow(/not the sender/);
+    expect(() => sim.as({ recipientSecret: bobSecret }).withEscrow(id, opening).claim(randomBytes())).toThrow(/unknown receipt/);
+  });
+
+  it('a wrong recipient secret is rejected even with a valid opening', () => {
+    const id = sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(15)));
+    const opening = sim.privateState.escrows![toHex(id)];
+    expect(() => sim.as({ recipientSecret: randomBytes() }).withEscrow(id, opening).claim(id)).toThrow(/not the intended recipient/);
+    expect(sim.ledger.receipts.lookup(id).status).toBe(ReceiptStatus.PENDING);
+  });
+
+  it('a closed corridor blocks new sends but pending escrows stay claimable', () => {
+    const id = sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(15)));
+    const opening = sim.privateState.escrows![toHex(id)];
+    sim.as({ governorSecret }).closeCorridor(COUNTRY.UAE, COUNTRY.PHILIPPINES);
+    expect(() => sim.as(alice).sendRemittance(COUNTRY.PHILIPPINES, 1n, bobTag, freshCoin(usd(15)))).toThrow(/corridor not approved/);
+    sim.as({ recipientSecret: bobSecret }).withEscrow(id, opening).claim(id);
+    expect(sim.ledger.receipts.lookup(id).status).toBe(ReceiptStatus.CLAIMED);
+  });
+});

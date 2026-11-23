@@ -34,7 +34,7 @@ function kindColor(kind: string, accentHex: string): number {
   if (kind === 'proof') return 0x6fb2ff;
   if (kind === 'shielded') return 0x43d19e;
   if (kind === 'active') return parseInt(accentHex.replace('#', ''), 16);
-  return 0xf25c36;
+  return 0xd8b26e;
 }
 
 export default function PrivacySimulator({ locale, onBack }: Props) {
@@ -145,7 +145,7 @@ export default function PrivacySimulator({ locale, onBack }: Props) {
     const rim = new THREE.DirectionalLight(0x6fb2ff, 0.4);
     rim.position.set(-6, 2.2, -4);
     scene.add(rim);
-    const accentLight = new THREE.PointLight(0xf25c36, 0.55, 14);
+    const accentLight = new THREE.PointLight(0xd8b26e, 0.55, 14);
     accentLight.position.set(0, 1.2, 0);
     scene.add(accentLight);
 
@@ -182,7 +182,7 @@ export default function PrivacySimulator({ locale, onBack }: Props) {
 
     const addNode = (id: string) => {
       const mat = new THREE.MeshStandardMaterial({
-        color: 0xf25c36,
+        color: 0xd8b26e,
         metalness: 0.42,
         roughness: 0.38,
         emissive: 0x000000,
@@ -412,7 +412,7 @@ export default function PrivacySimulator({ locale, onBack }: Props) {
         pos.setXYZ(1, tmpB.x, tmpB.y, tmpB.z);
         pos.needsUpdate = true;
         ed.mat.opacity = 0.12 + flow * 0.7;
-        tmpColor.setHex(kind === 'proof' ? 0x6fb2ff : kind === 'public' ? 0x5a6f92 : 0xf25c36);
+        tmpColor.setHex(kind === 'proof' ? 0x6fb2ff : kind === 'public' ? 0x5a6f92 : 0xd8b26e);
         ed.mat.color.copy(tmpColor);
         ed.line.visible = !(iso && iso !== ed.from && iso !== ed.to);
       }

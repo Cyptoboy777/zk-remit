@@ -158,7 +158,9 @@ export pure circuit viewTagOf(viewKey: Bytes<32>, nullifier: Bytes<32>): Bytes<3
   return persistentHash<Vector<3, Bytes<32>>>([pad(32, "zkremit:viewtag"), viewKey, nullifier]);
 }
 
-export pure circuit escrowCommitOf(coin: QualifiedShieldedCoinInfo, salt: Bytes<32>): Bytes<32> {
+// Binds the escrowed coin (nonce, colour, value) under a salt. The coin's Merkle tree index is
+// deliberately NOT part of the commitment: it only exists once the send tx is applied on chain.
+export pure circuit escrowCommitOf(coin: ShieldedCoinInfo, salt: Bytes<32>): Bytes<32> {
   return persistentCommit<Vector<3, Bytes<32>>>(
     [coin.nonce, coin.color, coin.value as Bytes<32>],
     salt
@@ -322,23 +324,17 @@ export circuit sendRemittance(
   nullifiers.insert(nul);
 
   // Shielded escrow: custody without publishing the coin nonce.
-  // mt_index is zeroed in the commitment on purpose: the coin's real position in the chain's coin
-  // tree only exists after this transaction is applied, so it cannot be bound here. claim/reclaim
-  // normalise the same way when checking the opening, and spend with the real index the opening carries.
+  // The commitment binds nonce, colour and value only. The coin's real position in the chain's coin
+  // tree (mt_index) only exists after this transaction is applied, so claim/reclaim receive it in the
+  // opening and spend that exact leaf.
   receiveShielded(disclose(coin));
-  const q = QualifiedShieldedCoinInfo {
-    nonce: coin.nonce,
-    color: coin.color,
-    value: coin.value,
-    mt_index: 0 as Uint<64>
-  };
   const salt = escrowSalt();
   receipts.insert(nul, Receipt {
     fromCountry: fromC,
     toCountry: toC,
     amountBand: band,
     epoch: ep,
-    escrowCommit: disclose(escrowCommitOf(q, salt)),
+    escrowCommit: disclose(escrowCommitOf(coin, salt)),
     recipientTag: disclose(recipientTag),
     viewTag: disclose(viewTagOf(viewKeyOf(sk), nul)),
     status: ReceiptStatus.PENDING
@@ -357,14 +353,12 @@ export circuit claim(receiptId: Bytes<32>): [] {
   assert(r.status == ReceiptStatus.PENDING, "ZKR: receipt already claimed");
   assert(recipientTagOf(recipientSecret()) == r.recipientTag, "ZKR: not the intended recipient");
 
+  // The opening carries the coin's REAL Merkle tree index (mt_index), resolved off-chain from the
+  // indexer's Zswap state by matching the coin commitment. sendShielded spends exactly that leaf;
+  // a wrong index cannot produce a valid spend.
   const o = escrowOpening(id);
-  const q0 = QualifiedShieldedCoinInfo {
-    nonce: o.coin.nonce,
-    color: o.coin.color,
-    value: o.coin.value,
-    mt_index: 0 as Uint<64>
-  };
-  assert(escrowCommitOf(q0, o.salt) == r.escrowCommit, "ZKR: escrow opening does not match");
+  const plain = ShieldedCoinInfo { nonce: o.coin.nonce, color: o.coin.color, value: o.coin.value };
+  assert(escrowCommitOf(plain, o.salt) == r.escrowCommit, "ZKR: escrow opening does not match");
 
   sendShielded(
     disclose(o.coin),
@@ -400,14 +394,12 @@ export circuit reclaim(receiptId: Bytes<32>): [] {
   const now = epoch.read() as Uint<32>;
   assert(now >= r.epoch + pol.claimWindow, "ZKR: claim window still open");
 
+  // The opening carries the coin's REAL Merkle tree index (mt_index), resolved off-chain from the
+  // indexer's Zswap state by matching the coin commitment. sendShielded spends exactly that leaf;
+  // a wrong index cannot produce a valid spend.
   const o = escrowOpening(id);
-  const q0 = QualifiedShieldedCoinInfo {
-    nonce: o.coin.nonce,
-    color: o.coin.color,
-    value: o.coin.value,
-    mt_index: 0 as Uint<64>
-  };
-  assert(escrowCommitOf(q0, o.salt) == r.escrowCommit, "ZKR: escrow opening does not match");
+  const plain = ShieldedCoinInfo { nonce: o.coin.nonce, color: o.coin.color, value: o.coin.value };
+  assert(escrowCommitOf(plain, o.salt) == r.escrowCommit, "ZKR: escrow opening does not match");
 
   sendShielded(
     disclose(o.coin),
