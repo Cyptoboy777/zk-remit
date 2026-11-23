@@ -63,6 +63,10 @@ npm run build -w frontend
 npm run dev -w frontend
 ```
 
+## Host the frontend on Vercel
+
+`vercel.json` holds the whole setup: import the repo with **Root Directory = repository root** and leave the build settings alone. The build installs `compactc` 0.31.1 (the compiled contract output is not committed, and the frontend needs it to typecheck, bundle and serve the prover keys), compiles the contract, then builds the frontend to `frontend/dist`. `VITE_BASE` is not set, so the app is served from `/`. Use Node 22 or newer. The rewrite sends unknown paths to `index.html` but never `keys/`, `zkir/` or `assets/`, so a missing prover file stays a real 404. Whatever `frontend/src/deployment.json` holds on the deployed branch is what the site uses.
+
 ## Deploy to Midnight Preview (operator laptop only)
 
 Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview. **The wallet recovery phrase / seed lives in an untracked `.env` or your shell and is never printed, logged or committed.** The deploy script prints only the contract address.

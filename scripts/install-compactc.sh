@@ -14,6 +14,12 @@ case "$(uname -s)-$(uname -m)" in
 esac
 mkdir -p "$DEST"
 curl -fsSL -o "$DEST/compactc.zip" "https://github.com/midnightntwrk/compact/releases/download/compactc-v$VER/compactc_v${VER}_${PLAT}.zip"
-(cd "$DEST" && unzip -o -q compactc.zip && rm compactc.zip)
+# unzip is missing on some build images (e.g. Vercel); fall back to Python, which drops the exec bit.
+if command -v unzip >/dev/null 2>&1; then
+  (cd "$DEST" && unzip -o -q compactc.zip && rm compactc.zip)
+else
+  (cd "$DEST" && python3 -c "import zipfile; zipfile.ZipFile('compactc.zip').extractall('.')" && rm compactc.zip)
+fi
+chmod +x "$DEST/compactc"
 "$DEST/compactc" --version
 echo "Add to PATH: export PATH=\"$DEST:\$PATH\""
