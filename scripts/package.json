@@ -3,15 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Operator tooling (deploys to Midnight Preview). Not a workspace on purpose: the root lockfile and CI stay untouched, and the Midnight runtime packages resolve from the single copy installed at the repo root.",
+  "description": "Operator tooling (deploys to Midnight Preview). A root workspace so every Midnight runtime package (ledger WASM included) resolves to ONE copy shared by the wallet and Midnight.js.",
   "scripts": {
     "deploy:preview": "tsx deploy-preview.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "4.1.1",
-    "@midnight-ntwrk/wallet-sdk": "1.2.0",
+    "@midnight-ntwrk/midnight-js-contracts": "5.0.1",
+    "@midnight-ntwrk/midnight-js-http-client-proof-provider": "5.0.1",
+    "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "5.0.1",
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "5.0.1",
+    "@midnight-ntwrk/midnight-js-protocol": "5.0.1",
+    "@midnight-ntwrk/midnight-js-types": "5.0.1",
+    "@midnightntwrk/wallet-sdk": "2.0.1",
     "@scure/bip39": "^1.4.0",
+    "@zk-remit/contract": "0.1.0",
     "rxjs": "^7.8.1",
     "ws": "^8.18.0"
   },

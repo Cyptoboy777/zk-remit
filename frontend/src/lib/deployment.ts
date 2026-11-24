@@ -36,4 +36,4 @@ export const loadDeployment = (): Deployment | null =>
   resolveDeployment(raw, (import.meta.env?.VITE_CONTRACT_ADDRESS as string | undefined) ?? undefined);
 
 /** Public explorer. It has a network switcher and search by address; no stable deep-link format is documented. */
-export const EXPLORER_URL = 'https://www.midnightexplorer.com/';
+export const EXPLORER_URL = 'https://preview.midnightexplorer.com/';

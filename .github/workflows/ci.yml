@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        compactc: ["0.31.1", "0.35.0"]
+        compactc: ["0.36.1"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,18 +24,21 @@ jobs:
       - name: Compile contract (with ZK keys)
         run: compactc contract/src/zk-remit.compact contract/src/managed/zk-remit
       - run: npm ci
-        if: matrix.compactc == '0.31.1'
+        if: matrix.compactc == '0.36.1'
       - name: Unit tests (Compact runtime simulator)
-        if: matrix.compactc == '0.31.1'
+        if: matrix.compactc == '0.36.1'
         run: npm test -w contract -- --reporter=verbose
       - name: Unit tests (deployment loading, backend selection, friendly errors)
-        if: matrix.compactc == '0.31.1'
+        if: matrix.compactc == '0.36.1'
         run: npm test -w frontend -- --reporter=verbose
+      - name: Typecheck deploy tooling
+        if: matrix.compactc == '0.36.1'
+        run: npm run typecheck -w scripts
       - name: Typecheck + build frontend
-        if: matrix.compactc == '0.31.1'
+        if: matrix.compactc == '0.36.1'
         run: npm run build -w frontend
       - name: Save built app for preview
-        if: matrix.compactc == '0.31.1'
+        if: matrix.compactc == '0.36.1'
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist

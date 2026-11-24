@@ -15,16 +15,16 @@ export class SimulatorBackend implements Backend {
     this.sim = new ZkRemitSimulator(governorSecret);
   }
   async addIssuer(as: ZkRemitPrivateState, pk: Uint8Array) {
-    this.sim.as(as).addIssuer(pk);
+    await this.sim.as(as).addIssuer(pk);
   }
   async issueCredential(as: ZkRemitPrivateState, c: Uint8Array) {
-    this.sim.as(as).issueCredential(c);
+    await this.sim.as(as).issueCredential(c);
   }
   async setCorridorPolicy(as: ZkRemitPrivateState, f: bigint, t: bigint, policy?: CorridorPolicy) {
-    this.sim.as(as).setCorridorPolicy(f, t, policy ?? defaultPolicy());
+    await this.sim.as(as).setCorridorPolicy(f, t, policy ?? defaultPolicy());
   }
   async advanceEpoch(as: ZkRemitPrivateState) {
-    this.sim.as(as).advanceEpoch();
+    await this.sim.as(as).advanceEpoch();
   }
   async sendRemittance(
     as: ZkRemitPrivateState,
@@ -34,22 +34,23 @@ export class SimulatorBackend implements Backend {
     coin: ShieldedCoin,
     salt?: Uint8Array,
   ) {
-    const receiptId = this.sim.as(as).sendRemittance(to, slot, tag, coin, salt);
+    const receiptId = await this.sim.as(as).sendRemittance(to, slot, tag, coin, salt);
     return { receiptId };
   }
   async claim(as: ZkRemitPrivateState, id: Uint8Array) {
-    this.sim.as(as).claim(id);
+    await this.sim.as(as).claim(id);
     return {};
   }
   async reclaim(as: ZkRemitPrivateState, id: Uint8Array) {
-    this.sim.as(as).reclaim(id);
+    await this.sim.as(as).reclaim(id);
     return {};
   }
   async proveReceiptOwnership(as: ZkRemitPrivateState, id: Uint8Array, ch: Uint8Array) {
-    this.sim.as(as).proveReceiptOwnership(id, ch);
+    await this.sim.as(as).proveReceiptOwnership(id, ch);
     return {};
   }
   async ledger() {
+    await this.sim.ready;
     return snapshot(this.sim.ledger);
   }
   getEscrow(receiptId: Uint8Array) {

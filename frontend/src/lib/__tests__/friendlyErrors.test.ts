@@ -11,6 +11,18 @@ describe('friendly errors', () => {
     expect(friendlyError(new MidnightProblem('escrow-index')).title).toMatch(/still confirming/);
   });
 
+  it('explains an unreadable escrow position without internals, and says the funds are safe', () => {
+    const f = friendlyError(new MidnightProblem('escrow-unsupported'));
+    expect(f.title).toMatch(/unavailable/i);
+    expect(f.body).toMatch(/safe/);
+    expect(f.body).not.toMatch(/mt_index|merkle|toString|undefined|Error/i);
+  });
+
+  it('never shows a raw stack or internal error to the user', () => {
+    const f = friendlyError(new TypeError("Cannot read properties of undefined (reading 'serialize')"));
+    expect(`${f.title} ${f.body}`).not.toMatch(/serialize|undefined|TypeError/);
+  });
+
   it('passes through only the contract rule text', () => {
     expect(cleanContractMessage('Error: ZKR: corridor not approved\n    at foo (file.js:1:1)')).toBe('Corridor not approved');
     const f = friendlyError(new Error('failed assert: ZKR: amount exceeds tier limit'));

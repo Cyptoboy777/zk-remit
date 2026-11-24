@@ -1,8 +1,11 @@
 {
   "installCommand": "npm ci",
-  "buildCommand": "bash scripts/install-compactc.sh 0.31.1 && export PATH=\"$HOME/.local/compactc-0.31.1:$PATH\" && npm run compact -w contract && npm run build -w frontend",
+  "buildCommand": "bash scripts/install-compactc.sh 0.36.1 && export PATH=\"$HOME/.local/compactc-0.36.1:$PATH\" && npm run compact -w contract && npm run build -w frontend",
   "outputDirectory": "frontend/dist",
   "rewrites": [
-    { "source": "/((?!keys/|zkir/|assets/).*)", "destination": "/index.html" }
+    {
+      "source": "/((?!keys/|zkir/|compiler/|assets/).*)",
+      "destination": "/index.html"
+    }
   ]
 }

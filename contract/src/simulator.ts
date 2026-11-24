@@ -3,11 +3,13 @@
  */
 import {
   type CircuitContext,
-  QueryContext,
   sampleContractAddress,
   createConstructorContext,
-  CostModel,
+  createCircuitContext,
 } from '@midnight-ntwrk/compact-runtime';
+
+/** Coin public key used for simulated callers (any 32-byte hex works off-chain). */
+const COIN_PK = '0'.repeat(64);
 import {
   Contract,
   type Credential,
@@ -73,10 +75,24 @@ export const freshCoin = (valueCents: bigint, color: Uint8Array = SETTLEMENT_COL
   value: valueCents,
 });
 
+type Coin = { nonce: Uint8Array; color: Uint8Array; value: bigint };
+type ImpureName = keyof Contract<ZkRemitPrivateState>['impureCircuits'];
+
+/**
+ * Runs the compiled circuits on the Compact runtime (0.21, ledger 9), with no network.
+ * Circuits are async in this runtime, so every circuit method returns a Promise. `as()` and
+ * `withEscrow()` only change local private state and stay synchronous for easy chaining.
+ */
 export class ZkRemitSimulator {
   readonly contract: Contract<ZkRemitPrivateState>;
-  circuitContext: CircuitContext<ZkRemitPrivateState>;
   readonly settlementColor: Uint8Array;
+  readonly contractAddress = sampleContractAddress();
+  /** Resolves once the constructor has run. Every circuit call awaits it. */
+  readonly ready: Promise<void>;
+  /** Context returned by the most recent circuit call (zswap inputs/outputs, gas, trace). */
+  lastContext: CircuitContext<ZkRemitPrivateState> | undefined;
+  private ledgerState: unknown;
+  private ps: ZkRemitPrivateState;
   /**
    * Simulated position of the next escrow coin in the coin tree. The real chain assigns the index
    * when the transaction is applied; here each escrow takes the next slot so tests exercise a
@@ -87,132 +103,103 @@ export class ZkRemitSimulator {
   constructor(governorSecret: Uint8Array, settlementColor: Uint8Array = SETTLEMENT_COLOR) {
     this.settlementColor = new Uint8Array(settlementColor);
     this.contract = new Contract<ZkRemitPrivateState>(witnesses);
+    this.ps = { governorSecret };
     const governorPk = pureCircuits.governorPublicKey(governorSecret);
-    const { currentPrivateState, currentContractState, currentZswapLocalState } = this.contract.initialState(
-      createConstructorContext({ governorSecret }, '0'.repeat(64)),
-      governorPk,
-      this.settlementColor,
-    );
-    this.circuitContext = {
-      currentPrivateState,
-      currentZswapLocalState,
-      costModel: CostModel.initialCostModel(),
-      currentQueryContext: new QueryContext(currentContractState.data, sampleContractAddress()),
-    };
+    this.ready = this.contract
+      .initialState(createConstructorContext({ governorSecret }, COIN_PK), governorPk, this.settlementColor)
+      .then((r) => {
+        this.ledgerState = r.currentContractState;
+        this.ps = { ...r.currentPrivateState, ...this.ps };
+      });
+  }
+
+  /** Convenience: construct and wait for the constructor. */
+  static async create(governorSecret: Uint8Array, settlementColor?: Uint8Array) {
+    const sim = new ZkRemitSimulator(governorSecret, settlementColor);
+    await sim.ready;
+    return sim;
   }
 
   as(ps: ZkRemitPrivateState): this {
-    this.circuitContext = { ...this.circuitContext, currentPrivateState: { ...this.circuitContext.currentPrivateState, ...ps } };
+    this.ps = { ...this.ps, ...ps };
     return this;
   }
 
   get privateState(): ZkRemitPrivateState {
-    return this.circuitContext.currentPrivateState;
+    return this.ps;
   }
 
   get ledger(): Ledger {
-    return ledger(this.circuitContext.currentQueryContext.state);
+    if (this.ledgerState === undefined) throw new Error('ZK Remit simulator is still starting');
+    const st = this.ledgerState as { data?: unknown };
+    return ledger((st.data ?? st) as Parameters<typeof ledger>[0]);
   }
 
-  addIssuer(pk: Uint8Array): Ledger {
-    this.circuitContext = this.contract.impureCircuits.addIssuer(this.circuitContext, pk).context;
+  private async exec<R = unknown>(name: ImpureName, ...args: unknown[]): Promise<R> {
+    await this.ready;
+    const ctx = createCircuitContext<ZkRemitPrivateState>({
+      circuitId: name as string,
+      contractAddress: this.contractAddress,
+      coinPublicKeyOrZswapState: COIN_PK,
+      contractState: this.ledgerState as Parameters<typeof createCircuitContext>[0]['contractState'],
+      privateState: this.ps,
+    });
+    const fn = this.contract.impureCircuits[name] as unknown as (
+      c: CircuitContext<ZkRemitPrivateState>,
+      ...a: unknown[]
+    ) => Promise<{ result: R; context: CircuitContext<ZkRemitPrivateState> }>;
+    const r = await fn(ctx, ...args);
+    this.lastContext = r.context;
+    this.ledgerState = r.context.callContext.currentQueryContext.state;
+    this.ps = (r.context.callContext.currentPrivateState ?? this.ps) as ZkRemitPrivateState;
+    return r.result;
+  }
+
+  /** Coins this call consumed (each with the tree index it spent). */
+  get lastSpent() {
+    return this.lastContext?.callContext.currentZswapLocalState?.inputs ?? [];
+  }
+
+  async addIssuer(pk: Uint8Array) { await this.exec('addIssuer', pk); return this.ledger; }
+  async revokeIssuer(pk: Uint8Array) { await this.exec('revokeIssuer', pk); return this.ledger; }
+  async issueCredential(commitment: Uint8Array) { await this.exec('issueCredential', commitment); return this.ledger; }
+  async setCorridorPolicy(from: bigint, to: bigint, policy: CorridorPolicy = defaultPolicy()) {
+    await this.exec('setCorridorPolicy', from, to, policy);
     return this.ledger;
   }
-
-  revokeIssuer(pk: Uint8Array): Ledger {
-    this.circuitContext = this.contract.impureCircuits.revokeIssuer(this.circuitContext, pk).context;
-    return this.ledger;
-  }
-
-  issueCredential(commitment: Uint8Array): Ledger {
-    this.circuitContext = this.contract.impureCircuits.issueCredential(this.circuitContext, commitment).context;
-    return this.ledger;
-  }
-
-  setCorridorPolicy(from: bigint, to: bigint, policy: CorridorPolicy = defaultPolicy()): Ledger {
-    this.circuitContext = this.contract.impureCircuits.setCorridorPolicy(this.circuitContext, from, to, policy).context;
-    return this.ledger;
-  }
-
-  closeCorridor(from: bigint, to: bigint): Ledger {
-    this.circuitContext = this.contract.impureCircuits.closeCorridor(this.circuitContext, from, to).context;
-    return this.ledger;
-  }
-
-  advanceEpoch(): Ledger {
-    this.circuitContext = this.contract.impureCircuits.advanceEpoch(this.circuitContext).context;
-    return this.ledger;
-  }
-
+  async closeCorridor(from: bigint, to: bigint) { await this.exec('closeCorridor', from, to); return this.ledger; }
+  async advanceEpoch() { await this.exec('advanceEpoch'); return this.ledger; }
   /** Governor only. Preview/test deployments only. */
-  enableTestMint(): Ledger {
-    this.circuitContext = this.contract.impureCircuits.enableTestMint(this.circuitContext).context;
-    return this.ledger;
-  }
-
+  async enableTestMint() { await this.exec('enableTestMint'); return this.ledger; }
   /** Preview-only test funds: mints shielded settlement tokens to the caller, capped per call. */
-  mintTestSettlement(amount: bigint, nonce: Uint8Array = randomBytes()): Ledger {
-    this.circuitContext = {
-      ...this.circuitContext,
-      currentPrivateState: { ...this.circuitContext.currentPrivateState, mintNonceValue: nonce },
-    };
-    this.circuitContext = this.contract.impureCircuits.mintTestSettlement(this.circuitContext, amount).context;
+  async mintTestSettlement(amount: bigint, nonce: Uint8Array = randomBytes()) {
+    this.ps = { ...this.ps, mintNonceValue: nonce };
+    await this.exec('mintTestSettlement', amount);
     return this.ledger;
   }
 
-  sendRemittance(
-    to: bigint,
-    slot: bigint,
-    recipientTag: Uint8Array,
-    coin: { nonce: Uint8Array; color: Uint8Array; value: bigint },
-    escrowSaltValue?: Uint8Array,
-  ): Uint8Array {
+  async sendRemittance(to: bigint, slot: bigint, recipientTag: Uint8Array, coin: Coin, escrowSaltValue?: Uint8Array): Promise<Uint8Array> {
     const salt = escrowSaltValue ?? randomBytes();
-    this.circuitContext = {
-      ...this.circuitContext,
-      currentPrivateState: { ...this.circuitContext.currentPrivateState, escrowSaltValue: salt },
-    };
-    const r = this.contract.impureCircuits.sendRemittance(this.circuitContext, to, slot, recipientTag, coin);
-    this.circuitContext = r.context;
-    const id = r.result;
+    this.ps = { ...this.ps, escrowSaltValue: salt };
+    const id = await this.exec<Uint8Array>('sendRemittance', to, slot, recipientTag, coin);
     const opening: EscrowRecord = {
       coin: { nonce: coin.nonce, color: coin.color, value: coin.value, mt_index: this.nextEscrowIndex++ },
       salt,
     };
-    const escrows = { ...(this.circuitContext.currentPrivateState.escrows ?? {}), [toHex(id)]: opening };
-    this.circuitContext = {
-      ...this.circuitContext,
-      currentPrivateState: { ...this.circuitContext.currentPrivateState, escrows, escrowSaltValue: salt },
-    };
+    this.ps = { ...this.ps, escrows: { ...(this.ps.escrows ?? {}), [toHex(id)]: opening }, escrowSaltValue: salt };
     return id;
   }
 
   /** Share an escrow opening with another private state (claim link). */
   withEscrow(receiptId: Uint8Array, opening: EscrowRecord): this {
-    const escrows = { ...(this.circuitContext.currentPrivateState.escrows ?? {}), [toHex(receiptId)]: opening };
-    this.circuitContext = {
-      ...this.circuitContext,
-      currentPrivateState: { ...this.circuitContext.currentPrivateState, escrows },
-    };
+    this.ps = { ...this.ps, escrows: { ...(this.ps.escrows ?? {}), [toHex(receiptId)]: opening } };
     return this;
   }
 
-  claim(receiptId: Uint8Array): Ledger {
-    this.circuitContext = this.contract.impureCircuits.claim(this.circuitContext, receiptId).context;
-    return this.ledger;
-  }
-
-  reclaim(receiptId: Uint8Array): Ledger {
-    this.circuitContext = this.contract.impureCircuits.reclaim(this.circuitContext, receiptId).context;
-    return this.ledger;
-  }
-
-  proveReceiptOwnership(receiptId: Uint8Array, challenge: Uint8Array): Ledger {
-    this.circuitContext = this.contract.impureCircuits.proveReceiptOwnership(
-      this.circuitContext,
-      receiptId,
-      challenge,
-    ).context;
+  async claim(receiptId: Uint8Array) { await this.exec('claim', receiptId); return this.ledger; }
+  async reclaim(receiptId: Uint8Array) { await this.exec('reclaim', receiptId); return this.ledger; }
+  async proveReceiptOwnership(receiptId: Uint8Array, challenge: Uint8Array) {
+    await this.exec('proveReceiptOwnership', receiptId, challenge);
     return this.ledger;
   }
 }

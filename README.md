@@ -77,19 +77,24 @@ ZK Remit is infrastructure for licensed remittance operators (money transfer ope
 
 Honest status: there are no partners, users or revenue yet. This section describes the intended model, not traction.
 
-## Toolchain (ledger 8 / public nets)
+## Toolchain (ledger 9: Preview, Preprod, Mainnet)
+
+Midnight Preview restarted as a new ledger 9 chain on 7 Nov 2026, so the whole stack moved up together.
 
 | Component | Pin |
 |---|---|
-| compactc | **0.31.1** |
-| compact-runtime | **0.16.0** |
-| Midnight.js | **4.1.1** |
-| Proof server | **8.1.3** (never `:latest`) |
+| compactc | **0.36.1** (language 0.28.0) |
+| compact-runtime | **0.21.0** |
+| Midnight.js | **5.0.1** |
+| Wallet SDK (deploy script) | **2.0.1** |
+| DApp Connector API (Lace) | **4.1.0** |
+| Proof server | **9.0.2** (never `:latest`) |
 
 ## Develop
 
 ```bash
-export PATH="$HOME/.local/compactc-0.31.1:$PATH"
+./scripts/install-compactc.sh          # installs compactc 0.36.1
+export PATH="$HOME/.local/compactc-0.36.1:$PATH"
 npm ci
 compactc contract/src/zk-remit.compact contract/src/managed/zk-remit   # or npm run compact -w contract
 npm test -w contract
@@ -99,26 +104,17 @@ npm run dev -w frontend
 
 ## Host the frontend on Vercel
 
-`vercel.json` holds the whole setup: import the repo with **Root Directory = repository root** and leave the build settings alone. The build installs `compactc` 0.31.1 (the compiled contract output is not committed, and the frontend needs it to typecheck, bundle and serve the prover keys), compiles the contract, then builds the frontend to `frontend/dist`. `VITE_BASE` is not set, so the app is served from `/`. Use Node 22 or newer. The rewrite sends unknown paths to `index.html` but never `keys/`, `zkir/` or `assets/`, so a missing prover file stays a real 404. Whatever `frontend/src/deployment.json` holds on the deployed branch is what the site uses.
+`vercel.json` holds the whole setup: import the repo with **Root Directory = repository root** and leave the build settings alone. The build installs `compactc` 0.36.1 (the compiled contract output is not committed, and the frontend needs it to typecheck, bundle and serve the prover keys), compiles the contract, then builds the frontend to `frontend/dist`. `VITE_BASE` is not set, so the app is served from `/`. Use Node 22 or newer. The rewrite sends unknown paths to `index.html` but never `keys/`, `zkir/`, `compiler/` or `assets/`, so a missing prover file stays a real 404. Whatever `frontend/src/deployment.json` holds on the deployed branch is what the site uses.
 
 ## Deploy to Midnight Preview (operator laptop only)
 
-Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview. **The wallet recovery phrase / seed lives in an untracked `.env` or your shell and is never printed, logged or committed.** The deploy script prints only the contract address.
+Full walkthrough: [`docs/DEPLOY_PREVIEW.md`](docs/DEPLOY_PREVIEW.md). Short version: fund a Lace wallet on Preview (faucet, then Generate tDUST), put its phrase in an untracked `.env`, and run
 
-1. Start the proof server (pinned, never `:latest`):
-   `docker run -p 6300:6300 midnightntwrk/proof-server:8.1.3 midnight-proof-server -v`
-2. Install [Lace](https://www.lace.io/), enable Midnight, create or import a wallet, set the network to **Preview** and the proof server to `http://localhost:6300`.
-3. Get tNIGHT from the [Preview faucet](https://midnight-tmnight-preview.nethermind.dev/) (you solve the captcha), then **Generate tDUST** in Lace (fees are paid in tDUST; it takes a few minutes to accrue).
-4. Compile and install deploy tooling, then deploy:
-   ```bash
-   cp .env.example .env            # then put your Lace recovery phrase in .env (it is gitignored)
-   npm run compact                 # needs compactc 0.31.1
-   npm run deploy:setup            # installs scripts/ dependencies (wallet-sdk) once
-   npm run deploy:preview -- --check   # optional: syncs and tells you if tDUST is available, deploys nothing
-   npm run deploy:preview          # deploys, registers a demo issuer + 7 corridors, enables Preview test funds, prints the address
-   ```
-   It writes `frontend/src/deployment.json` (`{ network, contractAddress, deployedAt }`, safe to commit) and `scripts/.local/operator.json` (governor + issuer keys, **private, gitignored**). Pass `--no-seed` to skip seeding.
-5. Commit `frontend/src/deployment.json`, then rebuild/redeploy the site. Add the address to the top of this README.
+```bash
+npm run deploy:preview:all
+```
+
+It checks Node, Docker, the proof server (starts 9.0.2 if missing), compactc 0.36.1 and the compiled contract (installs and compiles if missing), the phrase (never printed) and tDUST, then deploys, seeds a demo issuer, 7 corridors and Preview test funds, and fills the Deployment table below. `npm run deploy:check` does everything except the deploy.
 
 ## Test on Midnight Preview
 
@@ -130,28 +126,29 @@ Needs Docker, Node >= 22, the compiled contract, and a wallet funded on Preview.
 
 **Test funds (Preview only).** `sendRemittance` escrows a shielded settlement token and the Preview faucet only issues unshielded tNIGHT, so the contract has a **Preview-only** `mintTestSettlement(amount)` circuit (capped at 1000.00 per call). It is inert unless the governor calls `enableTestMint()`, which `deploy:preview` does and a production deployment never would. In the app, the Send screen shows **Get test funds** when your settlement balance is 0. The first mint records the minted token's colour as the settlement colour; those tokens are demo tokens, not money.
 
-**Releasing escrow on Preview.** Claim and reclaim resolve the escrow coin's real tree index from the indexer right before proving (see "What stays private" above). If the send is still confirming, the app says so and asks the user to try again in a minute; nothing is spent.
+**Releasing escrow on Preview.** Claim and reclaim resolve the escrow coin's real tree index from the indexer right before proving (see "What stays private" above). If the send is still confirming, the app says so and asks the user to try again in a minute; nothing is spent. Midnight.js 5 and ledger-v9 have no official "index of this commitment" API, so the lookup reads the Zswap state the indexer returns and has three outcomes: found, not yet (still confirming), or unreadable. Unreadable stops before any fee and tells the user the funds stay in escrow and the sender can reclaim after the window. Tests cover the indexer round trip, indices past 255, and both fallbacks.
 
 **We never invent contract addresses, transactions or users.**
 
 ## Deployment (Midnight Preview)
 
-Filled in after the operator deploy (see [`docs/DEPLOY_PREVIEW.md`](docs/DEPLOY_PREVIEW.md)). Nothing here is invented: each value is copied from the deploy script output.
+Filled in by `npm run deploy:fill-docs` after the operator deploy (see [`docs/DEPLOY_PREVIEW.md`](docs/DEPLOY_PREVIEW.md)). Nothing here is invented: each value is copied from `frontend/src/deployment.json`, which the deploy script writes.
 
+<!-- deployment:start -->
 | Item | Value |
-|---|---|
-| Network | Midnight Preview |
+| --- | --- |
+| Network | Midnight Preview (ledger 9) |
 | Contract address | _pending deploy_ |
 | Deploy transaction | _pending deploy_ |
 | Seed transactions (issuer, corridors, test funds) | _pending deploy_ |
-| First end-to-end send / claim | _pending deploy_ |
+<!-- deployment:end -->
 
 ## Judge checklist
 
-- [x] Compact compiles (0.31.1) with witnesses + commitments
+- [x] Compact compiles (0.36.1, ledger 9) with witnesses + commitments
 - [x] Simulator tests assert ledger state (contract) + deployment loading / backend selection / friendly-error tests (frontend)
 - [x] Frontend calls circuits and reads ledger snapshot
-- [ ] Deployed Preview address in README (run `npm run deploy:preview`, then add the address here)
+- [ ] Deployed Preview address in README (`npm run deploy:preview:all` fills it in)
 - [x] Privacy table (above) + in-app disclosure preview
 - [x] Apache-2.0 license, public repo, topic `midnightntwrk`
 

@@ -3,21 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "ZK Remit \u2014 compliant cross-border remittances with zero-knowledge KYC on Midnight",
+  "description": "ZK Remit — compliant cross-border remittances with zero-knowledge KYC on Midnight",
   "license": "Apache-2.0",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "workspaces": [
     "contract",
-    "frontend"
+    "frontend",
+    "scripts"
   ],
   "scripts": {
     "compact": "npm run compact -w contract",
     "test": "npm test -w contract && npm test -w frontend",
     "build": "npm run build -w frontend",
     "dev": "npm run dev -w frontend",
-    "deploy:setup": "npm install --prefix scripts",
-    "deploy:preview": "npm run deploy:preview --prefix scripts --"
+    "deploy:setup": "echo \"Deploy tooling is installed by npm ci at the repo root. Nothing else to do.\"",
+    "deploy:preview": "npm run deploy:preview -w scripts --",
+    "deploy:preview:all": "node scripts/deploy-all.mjs",
+    "deploy:check": "node scripts/deploy-all.mjs --check-only",
+    "deploy:fill-docs": "node scripts/fill-docs.mjs"
   }
 }

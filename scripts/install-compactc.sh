@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Installs the official Midnight Compact compiler (compactc) from GitHub releases.
-# Default 0.31.1 = the toolchain in Midnight's compatibility matrix for Preview/Preprod/Mainnet
-# (runtime 0.16.0, ledger 8). Pass another version (e.g. 0.35.0) to test forward-compat.
+# Default 0.36.1 = the Compact toolchain in Midnight's compatibility matrix for Preview/Preprod/Mainnet (ledger 9).
+# (Compact runtime 0.21.0). Pass another version to test forward-compat.
 set -euo pipefail
-VER="${1:-0.31.1}"
+VER="${1:-0.36.1}"
 DEST="${COMPACTC_HOME:-$HOME/.local/compactc-$VER}"
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) PLAT=x86_64-unknown-linux-musl ;;

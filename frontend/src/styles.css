@@ -888,3 +888,7 @@ button { -webkit-tap-highlight-color: transparent; }
 @keyframes rb-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .readback { animation: none; } .claim-guide li { transition: none; } }
 @media (max-width: 560px) { .readback dl { grid-template-columns: 1fr 1fr; } }
+
+/* Static first paint (index.html) before the app starts */
+#root[aria-busy='true'] button { cursor: progress; }
+.boot-error { margin: 1rem auto; max-width: 40rem; padding: 0.75rem 1rem; border-radius: 12px; background: rgba(216, 178, 110, 0.12); color: inherit; text-align: center; }

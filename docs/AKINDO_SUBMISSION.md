@@ -1,6 +1,6 @@
 # AKINDO submission draft (Midnight Wave 3)
 
-Note: ZK Remit has no AKINDO product page yet. It has to be created and submitted before Nov 30, 20:30 IST. Fill the bracketed parts after the Preview deploy. Plain text below, no markdown formatting, ready to paste.
+Note: ZK Remit has no AKINDO product page yet. It has to be created and submitted before Nov 30, 20:30 IST. The Deployment block is filled in by npm run deploy:fill-docs after the Preview deploy; fill the remaining bracketed links by hand. Plain text below, no markdown formatting, ready to paste.
 
 ## Product name
 
@@ -26,14 +26,18 @@ Corridors have on-chain policies: per-tier caps, transfer slots per epoch, a max
 
 On Preview there is a capped test-funds mint so anyone can try a full send and claim. It is switched off unless the governor turns it on.
 
-The frontend connects Lace through the DApp Connector, runs every circuit against the deployed contract and re-reads the receipt from the chain after each step. A Simulator mode, clearly labeled, runs the same compiled contract in the browser for people without a wallet.
+The frontend connects Lace through the DApp Connector, lets Lace generate the proofs, runs every circuit against the deployed contract and re-reads the receipt from the chain after each step. A Simulator mode, clearly labeled, runs the same compiled contract in the browser for people without a wallet.
 
-There are 26 contract tests on the Compact runtime and 20 frontend tests, all passing in CI. The CI also compiles the contract with compactc 0.31.1 and 0.35.0.
+When Midnight relaunched Preview on ledger 9 in November, we moved the whole project to the new stack: Compact 0.36.1, Midnight.js 5 and Wallet SDK 2. Deploying is one command that checks Docker, the proof server, the compiler and the wallet's tDUST before it spends anything.
+
+There are 26 contract tests on the Compact runtime and 25 frontend tests, all passing in CI, which also compiles the contract with compactc 0.36.1 on every push.
 
 ## Deployment
 
-Midnight Preview contract: [address]
+<!-- deployment:start -->
+Contract address on Midnight Preview: [address]
 Deploy transaction: [tx hash]
+<!-- deployment:end -->
 Live app: https://cyptoboy777.github.io/zk-remit/
 
 ## Who pays

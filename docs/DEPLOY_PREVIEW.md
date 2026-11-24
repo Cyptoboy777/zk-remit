@@ -1,89 +1,63 @@
-# Deploy ZK Remit to Midnight Preview (operator laptop)
+# Deploy ZK Remit to Midnight Preview (your laptop)
 
-This runs on your own laptop. Your wallet recovery phrase stays on your laptop, in an untracked `.env` file. Never paste it into a chat, an issue, a commit or a website.
+Your wallet phrase stays on your laptop in an untracked `.env` file. Never paste it into a chat, an issue, a commit or a website.
 
-Tip: create a fresh Lace wallet just for Preview testing, so this phrase never protects real funds.
+Tip: make a fresh Lace wallet just for Preview, so this phrase never guards real money.
 
-Time needed: about 45 minutes, most of it waiting for the faucet and tDUST.
+Time: about 30 to 45 minutes, mostly waiting for tDUST and the first wallet sync.
 
-## 0. What you need
+Note: Midnight Preview restarted as a new ledger 9 chain on 7 Nov 2026. Old Preview balances and contracts are gone, so even an old Lace wallet needs fresh tNIGHT and a fresh "Generate tDUST".
 
-- Docker Desktop (running)
-- Node.js 22 or newer (`node -v`)
-- Git, and this repo cloned: `git clone https://github.com/Cyptoboy777/zk-remit && cd zk-remit && git checkout wave3-top`
+## What you need (one time)
+
+- Docker Desktop, open and running
+- Node.js 22.12 or newer (`node -v`)
+- macOS or Linux. On Windows, use WSL (Ubuntu): the Compact compiler has no Windows build.
 - Chrome or Brave with the Lace wallet extension
 
-## 1. Start the proof server (keep this terminal open)
+## The steps
 
-```bash
-docker run -p 6300:6300 midnightntwrk/proof-server:8.1.3 midnight-proof-server -v
-```
+1. Lace: install it, turn on Midnight, create a wallet, set the network to Preview. Write the 24 words on paper.
+2. Faucet: copy your `mn_addr_preview1...` address from Lace, open https://faucet.preview.midnight.network/ , paste it, solve the captcha, request tNIGHT.
+3. In Lace, press Generate tDUST, then Review and Confirm. tDUST starts filling up over a few minutes.
+4. Get the code and add your phrase:
+   ```bash
+   git clone https://github.com/Cyptoboy777/zk-remit && cd zk-remit && git checkout wave3-top
+   cp .env.example .env      # open .env, put your 24 words in quotes after MIDNIGHT_WALLET_MNEMONIC=
+   ```
+5. Run the one command:
+   ```bash
+   npm run deploy:preview:all
+   ```
+   It checks Node, installs packages, checks Docker, starts the proof server 9.0.2 in Docker if it is not running, installs compactc 0.36.1 and compiles the contract if needed, checks your phrase (never printed), syncs your wallet and checks tDUST, then asks "Deploy now? [y/N]". Type `y`.
+   It prints your wallet address first: it must match the address Lace shows. If tDUST is still 0 it waits up to 10 minutes.
+6. When it finishes it has written `frontend/src/deployment.json` and filled the README and AKINDO draft. Publish it:
+   ```bash
+   git add frontend/src/deployment.json README.md docs/AKINDO_SUBMISSION.md
+   git commit -m "Deploy ZK Remit to Midnight Preview" && git push
+   ```
 
-Check it in another terminal: `curl http://localhost:6300/version` should answer.
+Only want to test your setup without deploying? `npm run deploy:check` runs steps 1 to 7 and stops.
 
-## 2. Set up Lace for Preview
+## What gets written
 
-1. Install Lace from lace.io and turn on Midnight.
-2. Create a new wallet (write the 24 words on paper).
-3. Settings: network **Preview**, proof server **http://localhost:6300**.
+- `frontend/src/deployment.json`: network, contract address, time, deploy tx hash, seed tx hashes. Public; commit it.
+- `scripts/.local/operator.json`: governor and demo-issuer keys. Private and git-ignored. Do not share or commit it.
 
-## 3. Get test tokens
+If the deploy stops halfway, the address is already saved. `npm run deploy:fill-docs` re-fills the docs at any time.
 
-1. Copy your unshielded Preview address from Lace.
-2. Open the Preview faucet (https://midnight-tmnight-preview.nethermind.dev/), paste the address, solve the captcha, request tNIGHT.
-3. In Lace, press **Generate tDUST**. Fees are paid in tDUST, and it takes a few minutes to build up.
+## Try the live flow (and record the demo)
 
-## 4. Install, compile and check
+1. Open the app, press Connect Lace, approve. Proofs are made by Lace, so app users do not need Docker.
+2. Issuer tab: paste the contents of `scripts/.local/operator.json` (it stays in this browser), then Issue my credential.
+3. Send: press Get test funds once, pick a corridor and amount, send, approve in Lace. "What the public ledger shows" re-reads the receipt from Preview.
+4. Claim: open the claim link or QR, ideally in a second browser profile with a second Lace wallet, and claim.
+5. Auditor: prove ownership of the receipt.
 
-```bash
-npm ci
-./scripts/install-compactc.sh 0.31.1
-export PATH="$HOME/.local/compactc-0.31.1:$PATH"
-npm run compact                 # compiles the contract with prover keys (about a minute)
-npm run deploy:setup            # installs the deploy tooling once
-cp .env.example .env            # open .env and put your Lace 24 words after MIDNIGHT_WALLET_MNEMONIC=
-npm run deploy:preview -- --check
-```
+## If something goes wrong
 
-`--check` syncs the wallet and tells you whether tDUST is available. It deploys nothing. If it says no tDUST, wait a few minutes and run it again.
-
-## 5. Deploy
-
-```bash
-npm run deploy:preview
-```
-
-It prints `CONTRACT ADDRESS: ...` and `DEPLOY TX: ...`, then registers a demo issuer, opens 7 corridors and enables Preview test funds, printing a tx hash for each.
-
-It writes two files:
-
-- `frontend/src/deployment.json`: network, contract address, deploy time and tx hashes. Public, commit it.
-- `scripts/.local/operator.json`: governor and demo-issuer keys. Private and gitignored. Do not share or commit it.
-
-If the deploy stops halfway, the address is already saved in `deployment.json`. Run it again with `--no-seed` only if you need a fresh contract.
-
-## 6. Publish the address
-
-```bash
-git add frontend/src/deployment.json
-git commit -m "Record Midnight Preview deployment"
-git push origin wave3-top
-```
-
-Then fill the "Deployment (Midnight Preview)" table in `README.md` with the printed address and tx hashes (or send them to your assistant to fill in). Once the branch is merged, both the hosted sites rebuild and open in Midnight Preview mode on this contract automatically; Simulator stays available from the toggle.
-
-## 7. Test the live flow (and record the demo)
-
-1. Open the app, press **Connect Lace**, approve.
-2. **Issuer** tab: paste the contents of `scripts/.local/operator.json` (it stays in this browser only), then **Issue my credential**.
-3. **Send**: press **Get test funds** once, pick a corridor and amount, send. Proving takes up to a minute; approve in Lace. The "What the public ledger shows" panel re-reads the receipt from Preview.
-4. **Claim**: open the claim link or QR, ideally in a second browser profile with a second Lace wallet. Claim; the read-back panel turns to "Claimed".
-5. **Auditor**: prove ownership of the receipt to a challenge.
-
-Copy the send and claim tx hashes into the README table too.
-
-## Troubleshooting
-
-- "Proof server is not reachable": Docker is not running or port 6300 is busy.
-- "No tDUST": generate tDUST in Lace for the same wallet and wait.
+- "Docker is not running": open Docker Desktop and wait until it says running.
+- "Proof server is not reachable": Docker is off or port 6300 is taken by something else.
+- "No tDUST": press Generate tDUST in Lace for the same wallet and wait a few minutes. The address printed by the script must match Lace.
+- Lines like `Wallet.Sync` or `RPC-CORE ... disconnected` during sync are retries; leave it running.
 - "Transfer still confirming" on claim: the send is not indexed yet. Wait a minute and press claim again.

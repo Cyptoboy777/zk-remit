@@ -26,10 +26,10 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - name: Install compactc 0.31.1
+      - name: Install compactc 0.36.1
         run: |
-          ./scripts/install-compactc.sh 0.31.1
-          echo "$HOME/.local/compactc-0.31.1" >> "$GITHUB_PATH"
+          ./scripts/install-compactc.sh 0.36.1
+          echo "$HOME/.local/compactc-0.36.1" >> "$GITHUB_PATH"
       - name: Compile Compact contract (circuits + prover/verifier keys)
         run: compactc contract/src/zk-remit.compact contract/src/managed/zk-remit
       - run: npm ci

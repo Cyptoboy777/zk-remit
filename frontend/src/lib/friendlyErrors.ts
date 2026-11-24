@@ -9,6 +9,7 @@ export type Problem =
   | 'no-settlement'
   | 'operator-key'
   | 'escrow-index'
+  | 'escrow-unsupported'
   | 'rejected'
   | 'proof'
   | 'network'
@@ -54,13 +55,17 @@ const COPY: Record<Exclude<Problem, 'contract'>, { title: string; body: string }
     title: 'Transfer still confirming',
     body: 'The network has not finished recording this transfer yet. Wait a minute and try again. Nothing was changed.',
   },
+  'escrow-unsupported': {
+    title: 'Release is unavailable right now',
+    body: 'This app could not read where the escrowed funds sit on the network, so it stopped before asking for any fee. The funds stay safe in escrow, and the sender can take them back after the claim window.',
+  },
   rejected: {
     title: 'Request cancelled',
     body: 'The wallet request was declined, so nothing was sent.',
   },
   proof: {
     title: 'Could not generate the proof',
-    body: 'The proof server did not respond. Make sure it is running and that Lace points to it, then try again.',
+    body: 'The zero-knowledge proof could not be made. Check that Lace is unlocked and set to Preview, then try again. If Lace is set to use a local proof server, make sure it is running.',
   },
   network: {
     title: 'Network is not responding',

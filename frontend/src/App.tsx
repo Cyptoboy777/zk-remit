@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   COUNTRY,
   TIER,
@@ -14,7 +14,7 @@ import {
   type ZkRemitPrivateState,
 } from '@zk-remit/contract';
 import { SimulatorBackend } from './lib/simulatorBackend';
-import { MidnightBackend, type Stage } from './lib/midnightBackend';
+import type { Stage } from './lib/midnightBackend';
 import { EXPLORER_URL, loadDeployment } from './lib/deployment';
 import { availableModes, defaultMode, modeLabel, type Mode } from './lib/backendSelect';
 import { MidnightProblem, friendlyError, friendlyLine, type Friendly } from './lib/friendlyErrors';
@@ -24,7 +24,7 @@ import { anonymitySetSize } from './lib/anonymity';
 import { buildClaimHash, parseClaimHash, qrDataUrl, type ClaimPayload } from './lib/claimLink';
 import { LOCALES, t, type Locale } from './lib/i18n';
 import { decode, encode, fromHex } from './lib/codec';
-import PrivacySimulator from './privacy/PrivacySimulator';
+const PrivacySimulator = lazy(() => import('./privacy/PrivacySimulator'));
 import { ChainReadback } from './ui/ChainReadback';
 import { ClaimGuide } from './ui/ClaimGuide';
 import { CorridorFlags, Flag } from './ui/flags';
@@ -237,6 +237,7 @@ export default function App() {
     setConn({ status: 'connecting' });
     setNotice(null);
     try {
+      const { MidnightBackend } = await import('./lib/midnightBackend');
       const b = await MidnightBackend.connect(deployment, setStage);
       const stored = readStore<{ sender: ZkRemitPrivateState; recipient: ZkRemitPrivateState }>(personaKey(deployment.contractAddress));
       if (stored) {
@@ -411,6 +412,14 @@ export default function App() {
 
   const go = (id: Tab) => { setMoreOpen(false); setTab(id); };
   const startDemo = () => { void seedDemo(); setTab('send'); };
+  // Replay a tap made on the static first-paint page before the app had started (see main.tsx).
+  useEffect(() => {
+    const intent = window.__zkBootIntent;
+    window.__zkBootIntent = undefined;
+    if (intent?.action === 'demo') startDemo();
+    else if (intent?.tab && NAV.some((n) => n.id === intent.tab)) setTab(intent.tab as Tab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const pickCorridor = (to: bigint) => { setToCountry(String(to)); setTab('send'); };
 
   const toIso = iso2of(BigInt(toCountry));
@@ -634,7 +643,7 @@ export default function App() {
                 <label className="field">
                   Corridor
                   <span className="field-box">
-                    <span className="field-prefix"><Flag iso="AE" /> AE  →</span>
+                    <span className="field-prefix"><Flag iso="AE" /> AE →<Flag iso={toIso} /></span>
                     <select value={toCountry} onChange={(e) => setToCountry(e.target.value)} aria-label="Destination country">
                       {Object.entries(COUNTRIES).map(([code, c]) => (
                         <option key={code} value={code}>{c.iso2 === 'GB' ? 'UK' : c.iso2} · {c.name}</option>
@@ -904,7 +913,9 @@ export default function App() {
         )}
 
         {tab === 'sim' && (
-          <PrivacySimulator locale={locale} onBack={() => go('home')} />
+          <Suspense fallback={<div className="card" role="status">Loading the privacy simulator…</div>}>
+            <PrivacySimulator locale={locale} onBack={() => go('home')} />
+          </Suspense>
         )}
 
         {tab === 'whatsnew' && (

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import * as L from '@midnight-ntwrk/ledger-v8';
-import { contractCoinCommitment, findEscrowIndex, leavesOf } from '../escrowIndex';
+import * as L from '@midnightntwrk/ledger-v9';
+import { contractCoinCommitment, findEscrowIndex, leavesOf, lookupEscrowIndex } from '../escrowIndex';
 
 const hx = (s: string) => Uint8Array.from(s.match(/../g)!.map((b) => parseInt(b, 16)));
 
@@ -45,5 +45,26 @@ describe('escrow tree index resolution (real mt_index)', () => {
   it('parses leaves from a state dump', () => {
     const dump = `coin_coms: MerkleTree {\n 0..=1: <collapsed>,\n 2: (${'ab'.repeat(32)}, Some(ContractAddress(00))),\n}`;
     expect(leavesOf(dump).get('ab'.repeat(32))).toBe(2n);
+  });
+
+  it('survives the indexer round trip (serialize, deserialize, filter)', () => {
+    const { st, coins } = build([other, ours, other], [7n, 8n, 9n]);
+    const back = L.ZswapChainState.deserialize(st.serialize());
+    expect(findEscrowIndex(back, coins[1], ours)).toBe(1n);
+  });
+
+  it('finds indices beyond the first byte in a busier tree', () => {
+    const owners = Array.from({ length: 300 }, (_, i) => (i === 257 ? ours : other));
+    const { st, coins } = build(owners, owners.map((_, i) => BigInt(i + 1)));
+    expect(findEscrowIndex(st, coins[257], ours)).toBe(257n);
+  });
+
+  it('tells "not yet" apart from "unsupported format"', () => {
+    const { st, coins } = build([other], [1n]);
+    expect(lookupEscrowIndex(st, coins[0], ours).kind).toBe('not-yet');
+    const weird = { filter: () => ({ toString: () => `State { coin_coms: [${ours}] }` }) };
+    expect(lookupEscrowIndex(weird, coins[0], ours).kind).toBe('unsupported');
+    const broken = { filter: () => { throw new Error('boom'); } };
+    expect(lookupEscrowIndex(broken as never, coins[0], ours).kind).toBe('unsupported');
   });
 });
