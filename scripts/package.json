@@ -7,7 +7,8 @@
   "scripts": {
     "deploy:preview": "tsx deploy-preview.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "dust:register": "tsx dust-register.ts"
+    "dust:register": "tsx dust-register.ts",
+    "test": "node --import tsx --test deploy-plan.test.ts"
   },
   "dependencies": {
     "@midnight-ntwrk/midnight-js-contracts": "5.0.1",

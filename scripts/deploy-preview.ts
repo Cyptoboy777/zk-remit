@@ -26,14 +26,23 @@
  * dry-run on a throwaway wallet up to the funding check; the deploy step itself can only run with a
  * funded wallet, so a first real run may still surface a small mismatch confined to this file.
  */
-import { existsSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
 import WebSocket from 'ws';
 import * as Rx from 'rxjs';
 
-import { deployContract } from '@midnight-ntwrk/midnight-js-contracts';
+import {
+  createLedger9UnprovenDeployTx,
+  submitTx,
+  submitInsertVerifierKeyTx,
+  findDeployedContract,
+} from '@midnight-ntwrk/midnight-js-contracts';
+import { LedgerTransaction } from '@midnight-ntwrk/midnight-js-types';
+import { sampleSigningKey } from '@midnight-ntwrk/compact-runtime';
+import * as L from '@midnightntwrk/ledger-v9';
+import { planDeploy, pendingKeys, parseBlockLimits, PREVIEW_BLOCK_LIMITS, seedSteps, blockShare, type Cost } from './deploy-plan.js';
 import {
   createLedger9MidnightProvider,
   createLedger9WalletProvider,
@@ -212,59 +221,155 @@ const main = async () => {
     CompiledContract.withCompiledFileAssets(ZK_DIR),
   );
 
-  const governorSecret = randomBytes();
-  const issuerSecret = randomBytes();
-  const governorPk = pureCircuits.governorPublicKey(governorSecret);
-  const issuerPk = pureCircuits.issuerPublicKey(issuerSecret);
-
-  say('Deploying contract (generating the deployment proof)…');
-  const deployed: any = await deployContract(providers, {
-    compiledContract,
-    privateStateId: 'zkRemitPrivateState',
-    initialPrivateState: { governorSecret },
-    args: [governorPk, SETTLEMENT_COLOR],
-  } as any);
-  const contractAddress: string = deployed.deployTxData.public.contractAddress;
-  const txOf = (r: any): string => (typeof r?.public?.txHash === 'string' ? r.public.txHash : '');
-  const deployTxHash = txOf(deployed.deployTxData);
-  const seedTxs: string[] = [];
+  // ---- resumable state (private, gitignored): secrets, the maintenance signing key, progress
+  mkdirSync(LOCAL_DIR, { recursive: true });
+  const operatorFile = resolve(LOCAL_DIR, 'operator.json');
+  type Op = { contractAddress?: string; governorSecret: string; issuerSecret: string; signingKey: string; deployTxHash?: string; keyTxs: Record<string, string>; seeded: string[]; seedTxs: string[] };
+  let op: Op | null = null;
+  try {
+    op = JSON.parse(readFileSync(operatorFile, 'utf8'));
+  } catch {
+    /* fresh deploy */
+  }
+  const save = () => {
+    writeFileSync(operatorFile, JSON.stringify(op, null, 2));
+    try {
+      chmodSync(operatorFile, 0o600);
+    } catch {
+      /* Windows */
+    }
+  };
   const record = () =>
     writeFileSync(
       DEPLOYMENT_JSON,
-      JSON.stringify({ network: NETWORK_ID, contractAddress, deployedAt: new Date().toISOString(), deployTxHash, seedTxs }, null, 2) + '\n',
+      JSON.stringify({ network: NETWORK_ID, contractAddress: op!.contractAddress, deployedAt: new Date().toISOString(), deployTxHash: op!.deployTxHash ?? '', seedTxs: op!.seedTxs }, null, 2) + '\n',
     );
+  const fromHex = (h: string) => Uint8Array.from(Buffer.from(h, 'hex'));
+  const txOf = (r: any): string => (typeof r?.public?.txHash === 'string' ? r.public.txHash : typeof r?.txHash === 'string' ? r.txHash : '');
 
-  // Persist right away so a failure while seeding never loses the address or the governor key.
-  mkdirSync(LOCAL_DIR, { recursive: true });
-  const operatorFile = resolve(LOCAL_DIR, 'operator.json');
-  writeFileSync(
-    operatorFile,
-    JSON.stringify({ contractAddress, governorSecret: toHex(governorSecret), issuerSecret: toHex(issuerSecret) }, null, 2),
-  );
-  chmodSync(operatorFile, 0o600);
-  record();
+  const chainState = async (address: string): Promise<any | null> => {
+    const read: any = await providers.publicDataProvider.queryContractState(address).catch(() => null);
+    return read ? read.contractState.deserialize({ v9: L.ContractState }) : null;
+  };
 
-  say(`\nCONTRACT ADDRESS: ${contractAddress}`);
-  if (deployTxHash) say(`DEPLOY TX: ${deployTxHash}`);
-  say('');
+  // Resume only if the saved contract really exists on chain; otherwise start a fresh deploy.
+  let existing = op?.contractAddress && op.signingKey ? await chainState(op.contractAddress) : null;
+  if (!existing) {
+    op = {
+      governorSecret: op?.governorSecret ?? toHex(randomBytes()),
+      issuerSecret: op?.issuerSecret ?? toHex(randomBytes()),
+      signingKey: String(sampleSigningKey()),
+      keyTxs: {},
+      seeded: [],
+      seedTxs: [],
+    };
+  } else {
+    say(`Resuming the deploy of ${op!.contractAddress} (saved in scripts/.local/operator.json).`);
+  }
+  const governorSecret = fromHex(op!.governorSecret);
+  const issuerPk = pureCircuits.issuerPublicKey(fromHex(op!.issuerSecret));
+  const ORDER = ['addIssuer', 'setCorridorPolicy', 'enableTestMint', 'sendRemittance', 'claim', 'reclaim', 'issueCredential', 'revokeIssuer', 'closeCorridor', 'advanceEpoch', 'mintTestSettlement', 'proveReceiptOwnership'];
+  const circuits = ORDER;
+
+  if (!existing) {
+    say('Building the deploy transaction…');
+    const unsubmitted: any = await createLedger9UnprovenDeployTx(providers, {
+      compiledContract,
+      signingKey: op!.signingKey,
+      args: [pureCircuits.governorPublicKey(governorSecret), SETTLEMENT_COLOR],
+      privateStateId: 'zkRemitPrivateState',
+      initialPrivateState: { governorSecret },
+    } as any);
+    const full: any = unsubmitted.private.unprovenTx.deserialize({ v9: L.Transaction });
+    if (full.guaranteedOffer || full.fallibleOffer) die('Unexpected coins in the deploy transaction; cannot split it safely.');
+    const intent: any = full.intents.get(1);
+    const fullState: any = intent.actions.find((a: any) => a instanceof L.ContractDeploy).initialState;
+    const allOps: string[] = fullState.operations().map((o: any) => (typeof o === 'string' ? o : new TextDecoder().decode(o)));
+    const order = [...ORDER.filter((c) => allOps.includes(c)), ...allOps.filter((c) => !ORDER.includes(c))];
+
+    // Preview's block limits, read live when possible.
+    let limits: Cost = PREVIEW_BLOCK_LIMITS;
+    let params: any = null;
+    try {
+      const r: any = await (await fetch(env.indexer, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ block { ledgerParameters } }' }) })).json();
+      params = L.LedgerParameters.deserialize(Buffer.from(r.data.block.ledgerParameters, 'hex'));
+      limits = parseBlockLimits(params.toString()) ?? limits;
+    } catch {
+      /* fall back to the known limits */
+    }
+    const buildDeploy = (keep: readonly string[]) => {
+      const st: any = new (L.ContractState as any)();
+      st.data = fullState.data;
+      st.maintenanceAuthority = fullState.maintenanceAuthority;
+      try {
+        st.balance = fullState.balance;
+      } catch {
+        /* empty balance */
+      }
+      for (const k of keep) st.setOperation(k, fullState.operation(k));
+      const d = new (L.ContractDeploy as any)(st);
+      return { tx: (L.Transaction as any).fromParts(NETWORK_ID, undefined, undefined, (L.Intent as any).new(intent.ttl).addDeploy(d)), address: String(d.address) };
+    };
+    const costOf = (tx: any): Cost => (params ? tx.cost(params, true) : { readTime: 0n, computeTime: 0n, blockUsage: BigInt(tx.serialize().length), bytesWritten: BigInt(tx.serialize().length + 3300), bytesChurned: 0n });
+    const insertCost = (c: string): Cost => {
+      const upd = new (L as any).MaintenanceUpdate(buildDeploy([]).address, [new (L as any).VerifierKeyInsert(c, new (L as any).ContractOperationVersionedVerifierKey('v4', fullState.operation(c).verifierKey))], 0n);
+      return costOf((L.Transaction as any).fromParts(NETWORK_ID, undefined, undefined, (L.Intent as any).new(intent.ttl).addMaintenanceUpdate(upd)));
+    };
+    const plan = planDeploy(order, (keys) => costOf(buildDeploy(keys).tx), insertCost, limits);
+    say(`Full deploy would use ${(blockShare(costOf(buildDeploy(order).tx), limits) * 100).toFixed(0)}% of a Preview block, too big for one transaction.`);
+    say(`Deploying with ${plan.inDeploy.length} of ${order.length} verifier keys (${(plan.deployShare * 100).toFixed(0)}% of a block); ${plan.inserts.length} more follow, one per transaction.`);
+    const { tx, address } = buildDeploy(plan.inDeploy);
+    op!.contractAddress = address;
+    save(); // saved before submitting so nothing is lost if the window closes
+    const res: any = await submitTx(providers, { unprovenTx: LedgerTransaction.seal('v9', 'Unproven', tx) } as any);
+    op!.deployTxHash = txOf(res);
+    save();
+    say(`\nCONTRACT ADDRESS: ${address}`);
+    if (op!.deployTxHash) say(`DEPLOY TX: ${op!.deployTxHash}`);
+    existing = await chainState(address);
+  }
+  const contractAddress = op!.contractAddress!;
+  await providers.privateStateProvider.setSigningKey(contractAddress, op!.signingKey);
+
+  // Insert every missing verifier key, one per transaction, skipping those already on chain.
+  const st: any = existing;
+  const allOps: string[] = circuits;
+  const have = new Set(allOps.filter((c) => st?.operation(c)?.verifierKey));
+  const todo = pendingKeys(allOps, have);
+  let k = 0;
+  for (const c of todo) {
+    const vk = await zkConfigProvider.getVerifierKey(c);
+    const r: any = await submitInsertVerifierKeyTx(providers, compiledContract as any, contractAddress, c as any, vk);
+    op!.keyTxs[c] = txOf(r);
+    save();
+    say(`  verifier key ${++k}/${todo.length}: ${c}  tx ${op!.keyTxs[c]}`);
+  }
+  record(); // all keys in: the contract is usable, so the app may switch to it
+
+  const deployed: any = await findDeployedContract(providers, {
+    compiledContract,
+    contractAddress,
+    privateStateId: 'zkRemitPrivateState',
+    initialPrivateState: { governorSecret },
+  } as any);
 
   if (process.argv.includes('--no-seed')) return;
-
-  say('Seeding: registering a demo issuer and 7 corridors (one transaction each)…');
-  const seeded = (label: string, r: any) => {
+  const steps = seedSteps(DEMO_CORRIDORS.length, !process.argv.includes('--no-test-mint')).filter((s) => !op!.seeded.includes(s));
+  if (steps.length) say(`Seeding (${steps.length} transaction(s), one each)…`);
+  for (const step of steps) {
+    let r: any;
+    if (step === 'issuer') r = await deployed.callTx.addIssuer(issuerPk);
+    else if (step === 'test-mint') r = await deployed.callTx.enableTestMint(); // PREVIEW ONLY
+    else {
+      const [from, to] = DEMO_CORRIDORS[Number(step.split('-')[1]) - 1];
+      r = await deployed.callTx.setCorridorPolicy(from, to, defaultPolicy());
+    }
     const h = txOf(r);
-    if (h) seedTxs.push(h);
+    if (h) op!.seedTxs.push(h);
+    op!.seeded.push(step);
+    save();
     record();
-    say(`  ${label}${h ? `  tx ${h}` : ''}`);
-  };
-  seeded('demo issuer registered', await deployed.callTx.addIssuer(issuerPk));
-  let n = 0;
-  for (const [from, to] of DEMO_CORRIDORS) {
-    seeded(`corridor ${++n}/${DEMO_CORRIDORS.length}`, await deployed.callTx.setCorridorPolicy(from, to, defaultPolicy()));
-  }
-  if (!process.argv.includes('--no-test-mint')) {
-    // PREVIEW ONLY: lets any wallet mint demo settlement funds (capped per call). Skip with --no-test-mint.
-    seeded('Preview test funds enabled', await deployed.callTx.enableTestMint());
+    say(`  ${step}${h ? `  tx ${h}` : ''}`);
   }
   say('Seeded. Operator keys were saved to scripts/.local/operator.json (private, gitignored, not printed).');
   say('Next: npm run deploy:fill-docs   (writes the address and tx hashes into README and the AKINDO draft)');
@@ -276,6 +381,7 @@ main()
   .catch((e) => {
     // Print a short reason only: never the seed, keys or a stack that could echo configuration.
     const reason = reasonOf(e);
-    console.error(`\nDeploy did not finish: ${reason}\nIf a contract address was printed above, it is already saved in frontend/src/deployment.json.\n`);
+    const hint = /1010|exhaust the block/i.test(reason) ? ' (a transaction was too big for a Preview block)' : '';
+    console.error(`\nDeploy did not finish: ${reason}${hint}\nProgress is saved in scripts/.local/operator.json; run the same command again to continue where it stopped.\n`);
     process.exit(1);
   });

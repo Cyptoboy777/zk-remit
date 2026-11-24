@@ -37,11 +37,22 @@ for (const f of [resolve(process.cwd(), '.env'), resolve(repo, '.env')]) {
 
 // The node client logs its own reconnects (RPC-CORE / API/INIT ... Normal Closure) straight to the
 // console. They are harmless retries but read like failures, so keep them out of the output.
+let lastSdkNote = 0;
 const NOISE = /RPC-CORE|API\/INIT|Failed WS Request|disconnected from wss?:|Normal Closure/;
 for (const k of ['error', 'warn', 'log'] as const) {
   const orig = console[k].bind(console);
   console[k] = (...a: unknown[]) => {
     if (a.some((x) => NOISE.test(typeof x === 'string' ? x : x instanceof Error ? x.message : ''))) return;
+    // The wallet SDK prints each indexer reconnect as "Wallet.Sync: [object Object]" plus a stack.
+    // Say it once a minute in plain words instead; the SDK retries on its own.
+    const tagged = a.find((x) => typeof (x as any)?._tag === 'string' && /^Wallet\./.test((x as any)._tag));
+    if (tagged) {
+      if (Date.now() - lastSdkNote > 60_000) {
+        lastSdkNote = Date.now();
+        orig(`  (indexer connection dropped, the wallet is reconnecting: ${reasonOf(tagged)})`);
+      }
+      return;
+    }
     orig(...a);
   };
 }
