@@ -40,7 +40,6 @@ import {
   findDeployedContract,
 } from '@midnight-ntwrk/midnight-js-contracts';
 import { LedgerTransaction } from '@midnight-ntwrk/midnight-js-types';
-import { sampleSigningKey } from '@midnight-ntwrk/compact-runtime';
 import * as L from '@midnightntwrk/ledger-v9';
 import { planDeploy, pendingKeys, parseBlockLimits, PREVIEW_BLOCK_LIMITS, seedSteps, blockShare, type Cost } from './deploy-plan.js';
 import {
@@ -224,7 +223,7 @@ const main = async () => {
   // ---- resumable state (private, gitignored): secrets, the maintenance signing key, progress
   mkdirSync(LOCAL_DIR, { recursive: true });
   const operatorFile = resolve(LOCAL_DIR, 'operator.json');
-  type Op = { contractAddress?: string; governorSecret: string; issuerSecret: string; signingKey: string; deployTxHash?: string; keyTxs: Record<string, string>; seeded: string[]; seedTxs: string[] };
+  type Op = { contractAddress?: string; governorSecret: string; issuerSecret: string; signingKey: any; deployTxHash?: string; keyTxs: Record<string, string>; seeded: string[]; seedTxs: string[] };
   let op: Op | null = null;
   try {
     op = JSON.parse(readFileSync(operatorFile, 'utf8'));
@@ -252,13 +251,17 @@ const main = async () => {
     return read ? read.contractState.deserialize({ v9: L.ContractState }) : null;
   };
 
+  // Midnight.js 5 wants the ledger's { tag: 'schnorr' | 'ecdsa', value: hex } object. An older run saved a
+  // string here; nothing was deployed with it, so it is simply replaced.
+  const validKey = (k: any) => k && typeof k === 'object' && /^(schnorr|ecdsa)$/.test(k.tag) && /^[0-9a-f]{64}$/i.test(String(k.value));
+  if (op && !validKey(op.signingKey)) op.signingKey = undefined;
   // Resume only if the saved contract really exists on chain; otherwise start a fresh deploy.
   let existing = op?.contractAddress && op.signingKey ? await chainState(op.contractAddress) : null;
   if (!existing) {
     op = {
       governorSecret: op?.governorSecret ?? toHex(randomBytes()),
       issuerSecret: op?.issuerSecret ?? toHex(randomBytes()),
-      signingKey: String(sampleSigningKey()),
+      signingKey: (L as any).sampleSigningKey(),
       keyTxs: {},
       seeded: [],
       seedTxs: [],
