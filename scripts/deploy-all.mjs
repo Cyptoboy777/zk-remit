@@ -7,8 +7,9 @@
  *
  *   1. Node.js 22.12 or newer           5. contract compiled with ZK keys (compiles if missing)
  *   2. packages installed (npm ci)      6. wallet phrase present in .env (never printed)
- *   3. Docker running                   7. tDUST on that wallet (deploy-preview --check)
+ *   3. Docker running                   7. tNIGHT + tDUST on that wallet (dust-register --ensure)
  *   4. proof server 9.0.2 on :6300      8. deploy + seed, then fill README / AKINDO draft
+ *      (7 offers to register tNIGHT for tDUST when Lace's Generate tDUST did not work)
  *      (starts it in Docker if absent)
  *
  * Flags: --check-only (stop after step 7), --yes (do not ask before deploying).
@@ -147,9 +148,24 @@ if (phrase.length && ![12, 15, 18, 21, 24].includes(phrase.length)) stop(`The ph
 ok(phrase.length ? `${phrase.length}-word phrase found (not shown)` : 'hex seed found (not shown)');
 
 // 7 ------------------------------------------------------------------ funding
-step(7, 'Wallet funding (tDUST)');
+step(7, 'Wallet funding (tNIGHT and tDUST)');
 info('Syncing the wallet with Preview. The first sync can take several minutes.');
-if (!run('npm', ['run', 'deploy:preview', '--', '--check'])) stop('The funding check did not finish. The message above says why.');
+// Runs tsx through Node directly (no shell), so it behaves the same in PowerShell, cmd, bash and zsh,
+// and its exit code comes back unchanged.
+const tsx = (script, argv) =>
+  spawnSync(process.execPath, [join(repo, 'node_modules/tsx/dist/cli.mjs'), join(repo, 'scripts', script), ...argv], { cwd: repo, stdio: 'inherit' }).status;
+// --ensure: if tDUST is already there it just reports; if tNIGHT is there but not registered (or
+// tDUST is still 0) it offers to register it, the step Lace's "Generate tDUST" button does.
+const dustArgs = ['--ensure', ...(args.has('--yes') ? ['--yes'] : []), ...(args.has('--check-only') ? ['--check'] : [])];
+const dustCode = tsx('dust-register.ts', dustArgs);
+if (dustCode === 2) stop('The wallet has no tNIGHT yet. Use the faucet (address printed above), then run this again.');
+if (dustCode === 4) {
+  if (args.has('--check-only')) stop('tNIGHT is there but no tDUST yet. Run  npm run dust:register  (or  npm run deploy:preview:all  and answer y).');
+  stop('Not deployed: the wallet needs tDUST first. Run this again and answer y, or run  npm run dust:register.');
+}
+if (dustCode === 3) stop('tDUST is not there yet. Wait a few minutes and run this again; the registration is already done.');
+if (dustCode !== 0) stop('The funding step did not finish. The message above says why.');
+ok('tDUST available');
 if (args.has('--check-only')) {
   console.log('\nCheck finished (--check-only). Run  npm run deploy:preview:all  without it to deploy.\n');
   process.exit(0);

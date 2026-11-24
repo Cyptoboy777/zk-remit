@@ -114,7 +114,7 @@ Full walkthrough: [`docs/DEPLOY_PREVIEW.md`](docs/DEPLOY_PREVIEW.md). Short vers
 npm run deploy:preview:all
 ```
 
-It checks Node, Docker, the proof server (starts 9.0.2 if missing), compactc 0.36.1 and the compiled contract (installs and compiles if missing), the phrase (never printed) and tDUST, then deploys, seeds a demo issuer, 7 corridors and Preview test funds, and fills the Deployment table below. `npm run deploy:check` does everything except the deploy.
+It checks Node, Docker, the proof server (starts 9.0.2 if missing), compactc 0.36.1 and the compiled contract (installs and compiles if missing), the phrase (never printed) and tDUST, then deploys, seeds a demo issuer, 7 corridors and Preview test funds, and fills the Deployment table below. `npm run deploy:check` does everything except the deploy. If Lace's "Generate tDUST" fails, `npm run dust:register` registers the wallet's tNIGHT for tDUST from the command line (Wallet SDK 2, works on Windows too).
 
 ## Test on Midnight Preview
 

@@ -18,6 +18,15 @@ describe('friendly errors', () => {
     expect(f.body).not.toMatch(/mt_index|merkle|toString|undefined|Error/i);
   });
 
+  it('explains a wallet built for the old ledger version (Lace ProtocolVersionMismatchError)', () => {
+    const e = Object.assign(new Error('This transaction was built for protocol version 2000000, and can only be used at versions below 2000000'), {
+      _tag: '@midnightntwrk/wallet-sdk-abstractions/WalletTransaction/ProtocolVersionMismatchError',
+    });
+    const f = friendlyError(e);
+    expect(f.problem).toBe('wallet-version');
+    expect(`${f.title} ${f.body}`).not.toMatch(/2000000|ProtocolVersion/);
+  });
+
   it('never shows a raw stack or internal error to the user', () => {
     const f = friendlyError(new TypeError("Cannot read properties of undefined (reading 'serialize')"));
     expect(`${f.title} ${f.body}`).not.toMatch(/serialize|undefined|TypeError/);

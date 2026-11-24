@@ -10,6 +10,7 @@ export type Problem =
   | 'operator-key'
   | 'escrow-index'
   | 'escrow-unsupported'
+  | 'wallet-version'
   | 'rejected'
   | 'proof'
   | 'network'
@@ -59,6 +60,10 @@ const COPY: Record<Exclude<Problem, 'contract'>, { title: string; body: string }
     title: 'Release is unavailable right now',
     body: 'This app could not read where the escrowed funds sit on the network, so it stopped before asking for any fee. The funds stay safe in escrow, and the sender can take them back after the claim window.',
   },
+  'wallet-version': {
+    title: 'Lace is not on the new Preview ledger yet',
+    body: 'Lace built this transaction for the old ledger version, so the network would refuse it. Nothing was sent. Update Lace, let it finish syncing, then try again.',
+  },
   rejected: {
     title: 'Request cancelled',
     body: 'The wallet request was declined, so nothing was sent.',
@@ -101,6 +106,8 @@ export const friendlyError = (e: unknown): Friendly => {
   const rule = cleanContractMessage(msg);
   if (rule) return { problem: 'contract', title: 'Not allowed by the contract', body: `${rule}.` };
 
+  const tag = typeof (e as { _tag?: unknown })?._tag === 'string' ? String((e as { _tag: string })._tag) : '';
+  if (/ProtocolVersionMismatch|built for protocol version/i.test(`${tag} ${msg}`)) return { problem: 'wallet-version', ...COPY['wallet-version'] };
   if (/reject|denied|declin|cancel|refus/i.test(msg)) return { problem: 'rejected', ...COPY.rejected };
   if (/prov(er|ing)|proof/i.test(msg)) return { problem: 'proof', ...COPY.proof };
   if (/no contract state|not found at|contract.*not.*found/i.test(msg)) return { problem: 'not-found', ...COPY['not-found'] };

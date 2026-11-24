@@ -20,6 +20,7 @@ Note: Midnight Preview restarted as a new ledger 9 chain on 7 Nov 2026. Old Prev
 1. Lace: install it, turn on Midnight, create a wallet, set the network to Preview. Write the 24 words on paper.
 2. Faucet: copy your `mn_addr_preview1...` address from Lace, open https://faucet.preview.midnight.network/ , paste it, solve the captcha, request tNIGHT.
 3. In Lace, press Generate tDUST, then Review and Confirm. tDUST starts filling up over a few minutes.
+   If Lace fails here (for example Lace 2.5.2 shows `ProtocolVersionMismatchError`), skip it: step 5 offers to do the same registration from this repo, or run `npm run dust:register` on its own after step 4.
 4. Get the code and add your phrase:
    ```bash
    git clone https://github.com/Cyptoboy777/zk-remit && cd zk-remit && git checkout wave3-top
@@ -58,6 +59,7 @@ If the deploy stops halfway, the address is already saved. `npm run deploy:fill-
 
 - "Docker is not running": open Docker Desktop and wait until it says running.
 - "Proof server is not reachable": Docker is off or port 6300 is taken by something else.
-- "No tDUST": press Generate tDUST in Lace for the same wallet and wait a few minutes. The address printed by the script must match Lace.
+- "No tDUST": run `npm run dust:register`. It prints your address and tNIGHT balance, registers the tNIGHT for tDUST (what Lace's button does), prints the registration transaction id and waits until tDUST appears. It works in PowerShell and without Docker. The address it prints must match Lace.
+- Lace "Generate tDUST" fails with `ProtocolVersionMismatchError`: that is Lace building for the old ledger. Use `npm run dust:register` instead; it waits until the wallet is on ledger 9 before building anything.
 - Lines like `Wallet.Sync` or `RPC-CORE ... disconnected` during sync are retries; leave it running.
 - "Transfer still confirming" on claim: the send is not indexed yet. Wait a minute and press claim again.

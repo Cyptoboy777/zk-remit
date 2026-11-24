@@ -30,8 +30,6 @@ import { existsSync, mkdirSync, writeFileSync, chmodSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
-import { mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
-import { wordlist } from '@scure/bip39/wordlists/english';
 import WebSocket from 'ws';
 import * as Rx from 'rxjs';
 
@@ -45,17 +43,8 @@ import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-p
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/v9/compact-js';
-import {
-  WalletFacade,
-  WalletSeeds,
-  WalletTransaction,
-  ShieldedWallet,
-  UnshieldedWallet,
-  DustWallet,
-  createKeystore,
-  PublicKey,
-  NoOpTransactionHistoryStorage,
-} from '@midnightntwrk/wallet-sdk';
+import { WalletFacade, WalletTransaction } from '@midnightntwrk/wallet-sdk';
+import { NETWORK_ID, env, say, die, readSeed, buildWallet, readyState, dustOf, reasonOf, type Built, type State } from './wallet.js';
 
 import {
   Contract,
@@ -76,23 +65,6 @@ const ZK_DIR = resolve(repo, 'contract/src/managed/zk-remit');
 const DEPLOYMENT_JSON = resolve(repo, 'frontend/src/deployment.json');
 const LOCAL_DIR = resolve(here, '.local');
 
-// Load .env first so every setting below (wallet, endpoints, proof server URL) can come from it.
-for (const f of ['.env', resolve(repo, '.env')]) {
-  try {
-    process.loadEnvFile(f);
-  } catch {
-    /* no .env here, fine */
-  }
-}
-
-const NETWORK_ID = 'preview' as const;
-const env = {
-  indexer: process.env.PREVIEW_INDEXER_URL ?? 'https://indexer.preview.midnight.network/api/v4/graphql',
-  indexerWs: process.env.PREVIEW_INDEXER_WS_URL ?? 'wss://indexer.preview.midnight.network/api/v4/graphql/ws',
-  node: process.env.PREVIEW_NODE_URL ?? 'wss://rpc.preview.midnight.network',
-  proofServer: process.env.PROOF_SERVER_URL ?? 'http://localhost:6300',
-};
-
 const DEMO_CORRIDORS: [bigint, bigint][] = [
   [COUNTRY.UAE, COUNTRY.PHILIPPINES],
   [COUNTRY.USA, COUNTRY.MEXICO],
@@ -103,34 +75,10 @@ const DEMO_CORRIDORS: [bigint, bigint][] = [
   [COUNTRY.SPAIN, COUNTRY.COLOMBIA],
 ];
 
-const say = (m: string) => console.log(m);
-const die = (m: string): never => {
-  console.error(`\n${m}\n`);
-  process.exit(1);
-};
-
 // ---------------------------------------------------------------- preflight
 
 
-const mnemonic = (process.env.MIDNIGHT_WALLET_MNEMONIC ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean).join(' ');
-const seedHex = (process.env.MIDNIGHT_WALLET_SEED ?? '').trim().replace(/^0x/, '');
-let seedBytes: Buffer;
-if (mnemonic) {
-  if (!validateMnemonic(mnemonic, wordlist)) {
-    die('MIDNIGHT_WALLET_MNEMONIC is not a valid recovery phrase (check the words and their order).');
-  }
-  // Standard BIP39 seed, the same derivation Lace uses for its recovery phrase.
-  seedBytes = Buffer.from(mnemonicToSeedSync(mnemonic));
-} else if (/^[0-9a-fA-F]{64}$/.test(seedHex)) {
-  seedBytes = Buffer.from(seedHex, 'hex');
-} else {
-  seedBytes = die(
-    'No wallet is configured.\n' +
-      'Set MIDNIGHT_WALLET_MNEMONIC (your 24-word Lace recovery phrase) or MIDNIGHT_WALLET_SEED (64 hex chars)\n' +
-      'in an untracked .env file or export it in this shell, then run again.\n' +
-      'It is read from the environment only and is never printed or saved.',
-  );
-}
+const seedBytes = readSeed();
 if (!existsSync(resolve(ZK_DIR, 'keys')) || !existsSync(resolve(ZK_DIR, 'contract'))) {
   die('Compiled contract not found. Run:  npm run compact   (needs compactc 0.36.1)');
 }
@@ -144,45 +92,8 @@ try {
 
 // ---------------------------------------------------------------- wallet (Wallet SDK 2)
 
-(globalThis as { WebSocket?: unknown }).WebSocket = WebSocket;
-
-const buildWallet = async () => {
-  let seeds: ReturnType<typeof WalletSeeds.fromMasterSeed>;
-  try {
-    seeds = WalletSeeds.fromMasterSeed(seedBytes);
-  } catch {
-    return die('The wallet seed could not be used. Check your recovery phrase.');
-  }
-  const keystore = createKeystore({ kind: 'schnorr', secret: seeds.unshielded }, NETWORK_ID);
-
-  const configuration = {
-    networkId: NETWORK_ID,
-    indexerClientConnection: { indexerHttpUrl: env.indexer, indexerWsUrl: env.indexerWs },
-    provingServerUrl: new URL(env.proofServer),
-    relayURL: new URL(env.node),
-    txHistoryStorage: new NoOpTransactionHistoryStorage(),
-    costParameters: { additionalFeeOverhead: 300_000_000_000_000n, feeBlocksMargin: 5 },
-  };
-
-  const wallet = await WalletFacade.init({
-    configuration: configuration as any,
-    shielded: (cfg) => ShieldedWallet(cfg).startWithSeed(seeds.shielded),
-    unshielded: (cfg) => UnshieldedWallet(cfg).startWithPublicKey(PublicKey.fromKeyStore(keystore)),
-    dust: (cfg) => DustWallet(cfg).startWithSeed(seeds.dust),
-  });
-  await wallet.start(seeds);
-  return { wallet, keystore };
-};
-type Built = Awaited<ReturnType<typeof buildWallet>>;
-
-/** Synced, and on one ledger (not mid-upgrade): the state Midnight.js needs before building a transaction. */
-const settledState = async (wallet: WalletFacade) => {
-  say('Syncing wallet with Preview (this can take a few minutes the first time)…');
-  await wallet.waitForSyncedState();
-  return Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.isSynced && s.protocol._tag === 'Settled')));
-};
-
-const dustOf = (state: Awaited<ReturnType<typeof settledState>>): bigint => state.dust.balance(new Date());
+// Wallet building and the ledger-9 readiness check live in wallet.ts (shared with dust-register.ts).
+const settledState = (wallet: WalletFacade) => readyState(wallet);
 
 const waitForFunds = async (wallet: WalletFacade) => {
   let state = await settledState(wallet);
@@ -196,13 +107,13 @@ const waitForFunds = async (wallet: WalletFacade) => {
     if (Date.now() > deadline) {
       return die(
         'No tDUST available after 10 minutes.\n' +
-          '1) Get tNIGHT from the Preview faucet.  2) In Lace, generate tDUST for this wallet.  3) Run this again.',
+          '1) Get tNIGHT from the Preview faucet.  2) Run  npm run dust:register  (or Generate tDUST in Lace).  3) Run this again.',
       );
     }
   }
 };
 
-const walletProviders = ({ wallet, keystore }: Built, state: Awaited<ReturnType<typeof settledState>>) => {
+const walletProviders = ({ wallet, keystore }: Built, state: State) => {
   // Midnight.js calls the key getters synchronously, so they are read once from the settled state.
   const coinPublicKey = state.shielded.coinPublicKey.toHexString();
   const encryptionPublicKey = state.shielded.encryptionPublicKey.toHexString();
@@ -263,9 +174,9 @@ const memoryPrivateState = (): PrivateStateProvider<string, unknown> => {
 // ---------------------------------------------------------------- main
 
 const main = async () => {
-  const w = await buildWallet();
+  const w = await buildWallet(seedBytes);
   // Public address only, so you can confirm this is the same wallet you funded in Lace.
-  say(`Wallet (unshielded address): ${String(w.keystore.getBech32Address().asString?.() ?? w.keystore.getBech32Address())}`);
+  say(`Wallet (unshielded address): ${w.address}`);
 
   if (process.argv.includes('--check')) {
     // Funding check only: nothing is deployed and nothing is written.
@@ -275,7 +186,7 @@ const main = async () => {
     say(
       dust
         ? 'This wallet can deploy. Run again without --check (or: npm run deploy:preview:all).'
-        : 'No tDUST yet. If you already did the faucet and "Generate tDUST" in Lace, wait a few minutes and re-run.\n' +
+        : 'No tDUST yet. Run  npm run dust:register  to register your tNIGHT for tDUST (works when Lace\'s "Generate tDUST" fails).\n' +
             'If it stays "no" after ~10 minutes, compare the address above with the one Lace shows: they must match.',
     );
     await w.wallet.stop();
@@ -364,7 +275,7 @@ main()
   .then(() => process.exit(0))
   .catch((e) => {
     // Print a short reason only: never the seed, keys or a stack that could echo configuration.
-    const reason = e instanceof Error ? e.message.split('\n')[0].slice(0, 300) : 'unknown error';
+    const reason = reasonOf(e);
     console.error(`\nDeploy did not finish: ${reason}\nIf a contract address was printed above, it is already saved in frontend/src/deployment.json.\n`);
     process.exit(1);
   });

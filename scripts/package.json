@@ -6,7 +6,8 @@
   "description": "Operator tooling (deploys to Midnight Preview). A root workspace so every Midnight runtime package (ledger WASM included) resolves to ONE copy shared by the wallet and Midnight.js.",
   "scripts": {
     "deploy:preview": "tsx deploy-preview.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dust:register": "tsx dust-register.ts"
   },
   "dependencies": {
     "@midnight-ntwrk/midnight-js-contracts": "5.0.1",
