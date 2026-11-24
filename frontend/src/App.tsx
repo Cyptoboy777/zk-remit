@@ -26,6 +26,7 @@ import { LOCALES, t, type Locale } from './lib/i18n';
 import { decode, encode, fromHex } from './lib/codec';
 const PrivacySimulator = lazy(() => import('./privacy/PrivacySimulator'));
 import { ChainReadback } from './ui/ChainReadback';
+import { BrandMark } from './ui/BrandMark';
 import { ClaimGuide } from './ui/ClaimGuide';
 import { CorridorFlags, Flag } from './ui/flags';
 import { ActivityList, statusOf } from './ui/ActivityList';
@@ -448,8 +449,8 @@ export default function App() {
       <a className="skip" href="#main">Skip to content</a>
       <header className="top">
         <div className="brand" onClick={() => go('home')} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') go('home'); }}>
-          <span className="mark" aria-hidden>Z</span>
-          <strong>ZK Remit</strong>
+          <BrandMark />
+          <strong><span className="wm-zk">ZK</span> Remit</strong>
           {mode === 'simulator' ? (
             <span className="pill demo" role="status">{t(locale, 'testnet_banner')}</span>
           ) : live ? (
@@ -963,7 +964,7 @@ export default function App() {
       </main>
 
       <footer className="foot">
-        <span>Apache-2.0 · Midnight Compact · {mode === 'preview' ? 'Midnight Preview' : backend.label}</span>
+        <span className="foot-brand"><BrandMark size={18} /> ZK Remit · Apache-2.0 · Midnight Compact · {mode === 'preview' ? 'Midnight Preview' : backend.label}</span>
         <span>
           {deployment
             ? <>Contract {short(deployment.contractAddress, 8)} · <a href={EXPLORER_URL} target="_blank" rel="noreferrer">Explorer ↗</a></>

@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/brand/logo.svg" />
+    <img src="frontend/public/brand/logo-on-light.svg" alt="ZK Remit" height="64" />
+  </picture>
+</p>
+
 # ZK Remit — private, compliant remittances on Midnight
 
 > **Send value across borders. Prove you're compliant. Reveal nothing else.**

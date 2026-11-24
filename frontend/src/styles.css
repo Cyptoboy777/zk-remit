@@ -91,19 +91,17 @@ button { -webkit-tap-highlight-color: transparent; }
   min-width: 0;
 }
 .mark {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 800;
-  font-size: 1.25rem;
-  letter-spacing: -0.04em;
+  display: block;
   flex: 0 0 auto;
-  box-shadow: 0 8px 20px color-mix(in oklab, var(--accent) 28%, transparent);
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.35), 0 0 0 1px color-mix(in oklab, var(--accent) 10%, transparent);
 }
+.mark-tile { fill: #0f1829; }
+.mark-ring { fill: none; stroke: var(--accent); stroke-opacity: 0.32; stroke-width: 1.5; }
+.mark-public { fill: var(--paper); }
+.mark-sealed { fill: var(--accent); }
+.foot-brand { display: inline-flex; align-items: center; gap: 0.45rem; }
+.foot-brand .mark { border-radius: 5px; box-shadow: none; }
 .brand strong {
   font-size: 1.15rem;
   font-weight: 700;
@@ -892,3 +890,4 @@ button { -webkit-tap-highlight-color: transparent; }
 /* Static first paint (index.html) before the app starts */
 #root[aria-busy='true'] button { cursor: progress; }
 .boot-error { margin: 1rem auto; max-width: 40rem; padding: 0.75rem 1rem; border-radius: 12px; background: rgba(216, 178, 110, 0.12); color: inherit; text-align: center; }
+.wm-zk { color: var(--accent); }
