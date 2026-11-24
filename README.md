@@ -145,9 +145,11 @@ Filled in by `npm run deploy:fill-docs` after the operator deploy (see [`docs/DE
 | Item | Value |
 | --- | --- |
 | Network | Midnight Preview (ledger 9) |
-| Contract address | _pending deploy_ |
-| Deploy transaction | _pending deploy_ |
-| Seed transactions (issuer, corridors, test funds) | _pending deploy_ |
+| Contract address | `0baf0281028181bf6d53c9f1ff37109252202244fe861cea2d90e132ee8615d3` |
+| Deploy transaction | `0cdd84e2a98028f3d50972140f9eb75f696ee2903225486bd7876991e4141bad` |
+| Deployed | 2026-11-24 |
+| Seed transactions | 9 (demo issuer, corridors, Preview test funds) |
+| Explorer | https://preview.midnightexplorer.com (search the address) |
 <!-- deployment:end -->
 
 ## Judge checklist

@@ -35,8 +35,10 @@ There are 26 contract tests on the Compact runtime and 25 frontend tests, all pa
 ## Deployment
 
 <!-- deployment:start -->
-Contract address on Midnight Preview: [address]
-Deploy transaction: [tx hash]
+Contract address on Midnight Preview: 0baf0281028181bf6d53c9f1ff37109252202244fe861cea2d90e132ee8615d3
+Deploy transaction: 0cdd84e2a98028f3d50972140f9eb75f696ee2903225486bd7876991e4141bad
+Deployed on: 2026-11-24
+Seed transactions recorded: 9
 <!-- deployment:end -->
 Live app: https://cyptoboy777.github.io/zk-remit/
 
