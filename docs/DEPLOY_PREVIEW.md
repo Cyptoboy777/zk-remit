@@ -61,5 +61,7 @@ If the deploy stops halfway, the address is already saved. `npm run deploy:fill-
 - "Proof server is not reachable": Docker is off or port 6300 is taken by something else.
 - "No tDUST": run `npm run dust:register`. It prints your address and tNIGHT balance, registers the tNIGHT for tDUST (what Lace's button does), prints the registration transaction id and waits until tDUST appears. It works in PowerShell and without Docker. The address it prints must match Lace.
 - Lace "Generate tDUST" fails with `ProtocolVersionMismatchError`: that is Lace building for the old ledger. Use `npm run dust:register` instead; it waits until the wallet is on ledger 9 before building anything.
+- Lace shows tNIGHT but `dust:register` says 0: check the address with no wallet at all, `npm run dust:register -- --address=mn_addr_preview1...`. It asks the Preview indexer directly. "Never seen this address" means the tNIGHT is not on the current Preview chain (Preview restarted on ledger 9 on 7 Nov; an older Lace can keep showing the old balance), so request it again from the faucet.
+- "Lost the indexer connection while syncing": your network closed the connection to the Preview indexer. Turn off any VPN or proxy, allow Node.js through the firewall or antivirus, and run again. The script stops with that message instead of hanging.
 - Lines like `Wallet.Sync` or `RPC-CORE ... disconnected` during sync are retries; leave it running.
 - "Transfer still confirming" on claim: the send is not indexed yet. Wait a minute and press claim again.

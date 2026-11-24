@@ -8,11 +8,13 @@
  *                                          already there, otherwise ask before registering
  *   --yes            do not ask (with --ensure)
  *   --timeout=MIN    how long to wait for tDUST after registering (default 20 minutes)
+ *   --address=mn_addr_preview1...   no wallet needed: ask the indexer what that address holds
  *
  * Reads MIDNIGHT_WALLET_MNEMONIC from .env (never printed). Uses the proof server on :6300 when it
  * is running, otherwise proves inside this process, so it also works without Docker, on Windows too.
  *
- * Exit codes: 0 tDUST available, 2 no tNIGHT, 3 timed out waiting, 4 declined, 1 other failure.
+ * Exit codes: 0 tDUST available, 2 no tNIGHT, 3 timed out waiting, 4 declined, 1 other failure
+ * (including a lost connection to the indexer, which is reported in plain words, never as a 0 balance).
  */
 import * as Rx from 'rxjs';
 import { createInterface } from 'node:readline/promises';
@@ -26,6 +28,7 @@ import {
   fmtDust,
   fmtNight,
   reasonOf,
+  indexerNight,
   describeProtocol,
   say,
   env,
@@ -51,7 +54,8 @@ const unregisteredOf = (s: State) => s.unshielded.availableCoins.filter((c: any)
 let stopWallet: (() => Promise<void>) | undefined;
 const finish = async (code: number, msg?: string) => {
   if (msg) (code === 0 ? console.log : console.error)(`\n${msg}\n`);
-  await stopWallet?.().catch(() => undefined);
+  // Stopping the wallet can hang when the indexer connection is already broken; never wait long for it.
+  await Promise.race([stopWallet?.().catch(() => undefined), new Promise((r) => setTimeout(r, 5_000))]);
   process.exit(code);
 };
 
@@ -87,7 +91,37 @@ const waitForDust = async (wallet: Awaited<ReturnType<typeof buildWallet>>['wall
   return finish(0, 'Done. This wallet now generates tDUST and can pay fees on Preview.');
 };
 
+/** What the indexer itself says about an address, with no wallet involved. */
+const indexerView = async (address: string) => {
+  try {
+    return await indexerNight(address);
+  } catch (e) {
+    say(`  (could not ask the indexer directly: ${reasonOf(e)})`);
+    return null;
+  }
+};
+
+const checkAddress = async (address: string) => {
+  if (!/^mn_addr_preview1[0-9a-z]{20,}$/.test(address)) return finish(1, 'That is not a Preview unshielded address (it should start with mn_addr_preview1).');
+  say(`Asking the Preview indexer about ${address} (no wallet needed)…`);
+  const v = await indexerView(address);
+  if (!v) return finish(1, 'Could not reach the Preview indexer. Check your internet connection and try again.');
+  say(`Transactions that touched this address: ${v.txCount}`);
+  say(`Unspent tNIGHT at this address: ${fmtNight(v.night)}`);
+  if (v.txCount === 0) {
+    return finish(
+      2,
+      'The current Preview chain has never seen this address. Preview was restarted on ledger 9 (7 Nov), so tNIGHT\n' +
+        'from before that is gone, and an older Lace can keep showing the old balance. Request tNIGHT again at\n' +
+        'https://faucet.preview.midnight.network/ for this address, wait for it to land, then run  npm run dust:register',
+    );
+  }
+  return finish(v.night > 0n ? 0 : 2);
+};
+
 const main = async () => {
+  const addrArg = args.find((a) => a.startsWith('--address='))?.split('=')[1];
+  if (addrArg) return checkAddress(addrArg.trim());
   const seed = readSeed();
   const useServer = await proofServerUp();
   if (!useServer && !has('--check')) {
@@ -108,6 +142,24 @@ const main = async () => {
   say(`tNIGHT coins not yet registered for tDUST: ${unregistered.length}`);
 
   if (night === 0n) {
+    // Double-check with the indexer directly so a sync problem can never pass for an empty wallet.
+    const v = await indexerView(w.address);
+    if (v && v.night > 0n) {
+      return finish(
+        1,
+        `The indexer shows ${fmtNight(v.night)} tNIGHT at this address but the wallet synced 0, so the sync went wrong.\n` +
+          'Nothing was sent. Run the same command again.',
+      );
+    }
+    if (v && v.txCount === 0) {
+      return finish(
+        2,
+        'The current Preview chain has never seen this address, so it holds no tNIGHT.\n' +
+          'Preview was restarted on ledger 9 (7 Nov); tNIGHT from before that is gone, and an older Lace can keep showing the old balance.\n' +
+          '1) Copy the address above.  2) Request tNIGHT at https://faucet.preview.midnight.network/  3) Run this again once it lands.\n' +
+          'If Lace shows a different mn_addr_preview1... address, the phrase in .env is for a different wallet.',
+      );
+    }
     return finish(
       2,
       'This wallet has no tNIGHT yet, so there is nothing to register.\n' +
