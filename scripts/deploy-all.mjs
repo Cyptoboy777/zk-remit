@@ -60,9 +60,6 @@ if (maj < 22 || (maj === 22 && min < 12)) {
   stop(`Node ${process.versions.node} is too old. Install Node 22.12 or newer (nodejs.org, the LTS button), then run this again.`);
 }
 ok(`Node ${process.versions.node}`);
-if (platform() === 'win32') {
-  stop('The Compact compiler has no Windows build. Open this folder in WSL (Ubuntu) and run the same command there.');
-}
 
 // 2 ------------------------------------------------------------------ packages
 step(2, 'Packages');
@@ -120,6 +117,9 @@ const compiledFor = () => {
   }
 };
 if (!existsSync(join(managed, 'keys/sendRemittance.prover')) || compiledFor() !== COMPACTC) {
+  if (platform() === 'win32') {
+    stop('The contract is not compiled yet and the Compact compiler has no Windows build. Copy the compiled contract/src/managed folder from a Linux/WSL machine, or run this in WSL (Ubuntu).');
+  }
   const local = join(homedir(), `.local/compactc-${COMPACTC}`);
   const env = { ...process.env, PATH: `${local}:${process.env.PATH}` };
   const have = tryRun(`PATH="${env.PATH}" compactc --version`);
