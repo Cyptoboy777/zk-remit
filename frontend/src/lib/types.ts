@@ -17,6 +17,7 @@ export type LedgerSnapshot = {
   governorPk: string;
   settlementColor: string;
   epoch: bigint;
+  credentialGeneration: bigint;
   issuerCount: bigint;
   corridors: { from: bigint; to: bigint; open: boolean; maxBand: bigint; claimWindow: bigint }[];
   credentialsIssued: bigint;
@@ -34,6 +35,7 @@ export const snapshot = (l: Ledger): LedgerSnapshot => ({
   governorPk: toHex(l.governorPk),
   settlementColor: toHex(l.settlementColor),
   epoch: l.epoch,
+  credentialGeneration: l.credentialGeneration,
   issuerCount: l.issuerCount,
   corridors: [...l.corridorPolicy].map(([k, p]) => ({
     from: k >> 16n,

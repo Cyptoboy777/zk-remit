@@ -13,7 +13,6 @@ import {
   type ZkRemitPrivateState,
 } from '@zk-remit/contract';
 import { SimulatorBackend } from './lib/simulatorBackend';
-import { CONFIGURED_ADDRESS, MidnightBackend } from './lib/midnightBackend';
 import type { Backend, LedgerSnapshot } from './lib/types';
 import { buildDisclosure, BAND_LABELS, amountBandOf } from './lib/disclosure';
 import { anonymitySetSize } from './lib/anonymity';
@@ -108,6 +107,8 @@ export default function App() {
   const [claimPayload, setClaimPayload] = useState<ClaimPayload | null>(() => parseClaimHash(location.hash));
   const [setupDone, setSetupDone] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [viewKeyEnabled, setViewKeyEnabled] = useState(false);
+  const [auditProofStatus, setAuditProofStatus] = useState('');
 
   const refresh = useCallback(async () => setSnap(await backend.ledger()), [backend]);
   useEffect(() => { void refresh().catch(() => undefined); }, [refresh]);
@@ -141,8 +142,11 @@ export default function App() {
     const p = freshPersonas();
     setPersonas(p);
     setBackend(new SimulatorBackend(p.governor.governorSecret!));
+    setSnap(null);
     setSent([]);
     setSetupDone(false);
+    setViewKeyEnabled(false);
+    setAuditProofStatus('');
     setLog([]);
     push('info', 'New simulator contract', 'Governor key rotated · epoch 1 · empty trees');
   };
@@ -158,7 +162,7 @@ export default function App() {
       await backend.setCorridorPolicy(personas.governor, COUNTRY.SINGAPORE, COUNTRY.INDONESIA, defaultPolicy());
       await backend.setCorridorPolicy(personas.governor, COUNTRY.SAUDI, COUNTRY.PAKISTAN, defaultPolicy());
       await backend.setCorridorPolicy(personas.governor, COUNTRY.SPAIN, COUNTRY.COLOMBIA, defaultPolicy());
-      const cred = makeCredential(personas.sender.holderSecret!, issuerPk, TIER.VERIFIED, COUNTRY.UAE, 12n);
+      const cred = makeCredential(personas.sender.holderSecret!, issuerPk, TIER.VERIFIED, COUNTRY.UAE, 12n, snap?.credentialGeneration ?? 1n);
       await backend.issueCredential(personas.issuer, pureCircuits.credentialCommitment(cred));
       setPersonas((p) => ({ ...p, sender: { ...p.sender, credential: cred } }));
       setSetupDone(true);
@@ -166,6 +170,7 @@ export default function App() {
     });
 
   const cents = Math.round(parseFloat(amount || '0') * 100);
+  const invalidAmount = !Number.isSafeInteger(cents) || cents <= 0 || cents > 100000;
   const disclosure = useMemo(
     () =>
       buildDisclosure({
@@ -244,6 +249,21 @@ export default function App() {
     });
 
   const receipts = snap?.receipts ?? [];
+  const viewKeyReceipts = useMemo(() => {
+    const holderSecret = personas.sender.holderSecret;
+    if (!viewKeyEnabled || !holderSecret) return [];
+    const viewKey = pureCircuits.viewKeyOf(holderSecret);
+    return receipts.filter(
+      (receipt) => toHex(pureCircuits.viewTagOf(viewKey, fromHex(receipt.id))) === receipt.viewTag,
+    );
+  }, [personas.sender.holderSecret, receipts, viewKeyEnabled]);
+  const proveSelectedReceipt = () => run('Prove receipt ownership', async () => {
+    if (!receipts[0]) throw new Error('Send a transfer before creating an audit proof.');
+    const challenge = randomBytes();
+    await backend.proveReceiptOwnership(personas.sender, fromHex(receipts[0].id), challenge);
+    setAuditProofStatus(`Challenge-bound proof recorded for receipt ${short(receipts[0].id)}.`);
+    return 'The simulator recorded a sender-ownership proof bound to a fresh challenge.';
+  });
   const go = (id: Tab) => { setMoreOpen(false); setTab(id); };
   const startDemo = () => { void seedDemo(); setTab('send'); };
   const pickCorridor = (to: bigint) => { setToCountry(String(to)); setTab('send'); };
@@ -276,9 +296,7 @@ export default function App() {
         <div className="brand" onClick={() => go('home')} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') go('home'); }}>
           <span className="mark" aria-hidden>Z</span>
           <strong>ZK Remit</strong>
-          {!CONFIGURED_ADDRESS && (
-            <span className="pill demo" role="status">{t(locale, 'testnet_banner')}</span>
-          )}
+          <span className="pill demo" role="status">{t(locale, 'testnet_banner')}</span>
         </div>
         <div className="top-actions">
           <label className="lang">
@@ -310,6 +328,14 @@ export default function App() {
 
         {tab === 'home' && (
           <>
+            <section className="notice-banner" role="note">
+              <span className="notice-dot" aria-hidden="true" />
+              <div>
+                <strong>Prototype mode</strong>
+                <p>This interactive demo runs the compiled contract in your browser. It does not connect to Midnight Preview or move real funds.</p>
+              </div>
+              <button type="button" className="text-link" onClick={() => go('whatsnew')}>How it works</button>
+            </section>
             <section className="home-hero">
               <div className="hero-copy">
                 <p className="eyebrow">Private by design · Global by nature</p>
@@ -391,18 +417,23 @@ export default function App() {
                 <label className="field">
                   Amount to send
                   <span className="field-box amount">
-                    <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" aria-label="Amount in USD" />
+                    <input type="number" min="0.01" max="1000" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" aria-label="Amount in USD" aria-invalid={invalidAmount} aria-describedby="amount-help" />
                     <span className="suffix">USD</span>
                   </span>
+                  <small id="amount-help" className={invalidAmount ? 'field-help invalid' : 'field-help'}>
+                    Enter $0.01–$1,000.00 for the demo credential.
+                  </small>
                 </label>
                 <label className="field">
                   Corridor
                   <span className="field-box">
                     <span className="field-prefix"><Flag iso="AE" /> AE  →</span>
                     <select value={toCountry} onChange={(e) => setToCountry(e.target.value)} aria-label="Destination country">
-                      {Object.entries(COUNTRIES).map(([code, c]) => (
-                        <option key={code} value={code}>{c.iso2 === 'GB' ? 'UK' : c.iso2} · {c.name}</option>
-                      ))}
+                      {Object.entries(COUNTRIES)
+                        .filter(([code]) => CORRIDORS.some((corridor) => corridor.from === COUNTRY.UAE && corridor.to === BigInt(code)))
+                        .map(([code, c]) => (
+                          <option key={code} value={code}>{c.iso2 === 'GB' ? 'UK' : c.iso2} · {c.name}</option>
+                        ))}
                     </select>
                   </span>
                 </label>
@@ -428,7 +459,7 @@ export default function App() {
               <button
                 type="button"
                 className="btn primary send-cta"
-                disabled={!!busy || !setupDone || !cents}
+                disabled={!!busy || !setupDone || invalidAmount}
                 onClick={() => void doSend()}
               >
                 {busy ?? t(locale, 'send')}
@@ -498,6 +529,7 @@ export default function App() {
                     <img className="qr" src={sent[0].qr} alt="Claim QR code" width={190} height={190} />
                     <p className="mono break fine">{sent[0].link}</p>
                     <button type="button" className="btn ghost" onClick={() => navigator.clipboard.writeText(sent[0].link)}>Copy link</button>
+                    <p className="fine claim-warning">This demo link contains bearer secrets and the transfer opening. Share it only with the intended recipient; anyone holding it can attempt the claim.</p>
                   </>
                 ) : (
                   <p className="muted">A QR code appears here after you send a transfer in this session.</p>
@@ -609,6 +641,38 @@ export default function App() {
                 )}
               </section>
             </div>
+            <section className="audit-tools card" aria-labelledby="audit-tools-title">
+              <div className="audit-tools-head">
+                <div>
+                  <p className="eyebrow">Sender-controlled access</p>
+                  <h2 id="audit-tools-title">Choose what an auditor can verify</h2>
+                  <p className="fine">These controls operate in the local simulator; no live network or independent auditor verifier is connected.</p>
+                </div>
+                <span className="pill">Simulator</span>
+              </div>
+              <div className="audit-tool-actions">
+                <button type="button" className="btn ghost" onClick={() => setViewKeyEnabled((enabled) => !enabled)} disabled={!cred}>
+                  {viewKeyEnabled ? 'Hide my receipt list' : 'Preview my view-key receipts'}
+                </button>
+                <button type="button" className="btn primary" onClick={() => void proveSelectedReceipt()} disabled={!receipts.length || !!busy}>
+                  {busy === 'Prove receipt ownership' ? 'Creating proof…' : 'Create receipt proof'}
+                </button>
+              </div>
+              {viewKeyEnabled && (
+                <div className="view-key-results" role="status">
+                  <strong>{viewKeyReceipts.length} matching {viewKeyReceipts.length === 1 ? 'receipt' : 'receipts'}</strong>
+                  {viewKeyReceipts.length ? viewKeyReceipts.map((receipt) => (
+                    <div className="view-key-row" key={receipt.id}>
+                      <span className="mono">{short(receipt.id)}</span>
+                      <span>{iso2of(receipt.fromCountry)} → {iso2of(receipt.toCountry)}</span>
+                      <span>{BAND_LABELS[Number(receipt.amountBand)]}</span>
+                    </div>
+                  )) : <p className="fine">No receipts match this sender&apos;s view key yet.</p>}
+                </div>
+              )}
+              {auditProofStatus && <p className="audit-proof-status" role="status">{auditProofStatus}</p>}
+              <p className="fine">A view key reveals matching receipt metadata, not names or exact amounts. Only share it with an authorized auditor. Independent auditor-verification tooling is not included in this prototype.</p>
+            </section>
             {snap && (
               <dl className="stats">
                 <div><dt>Receipts</dt><dd>{String(snap.totalReceipts)}</dd></div>
@@ -635,9 +699,9 @@ export default function App() {
                 <tr><td>Circuits</td><td>7</td><td>10 (+ reclaim, multi-issuer, policy)</td></tr>
                 <tr><td>Value movement</td><td>None</td><td>Shielded escrow / claim / reclaim</td></tr>
                 <tr><td>Corridors</td><td>Hard-coded open/close</td><td>On-chain CorridorPolicy</td></tr>
-                <tr><td>Issuers</td><td>1</td><td>Many + revoke-at-issue</td></tr>
-                <tr><td>UX</td><td>Basic tabs</td><td>Claim QR · Privacy Simulator</td></tr>
-                <tr><td>Deploy</td><td>Simulator only</td><td>Simulator live; Preview pending user faucet</td></tr>
+                <tr><td>Issuers</td><td>1</td><td>Multiple issuers; revocation advances a global credential generation</td></tr>
+                <tr><td>UX</td><td>Basic tabs</td><td>Claim QR · selective audit · Privacy Simulator</td></tr>
+                <tr><td>Deploy</td><td>Simulator only</td><td>Browser simulator only; no live Preview client</td></tr>
               </tbody>
             </table>
             <p className="fine">Compare: <code>github.com/Cyptoboy777/zk-remit/compare/wave2-baseline...wave3</code></p>
@@ -667,8 +731,8 @@ export default function App() {
       </main>
 
       <footer className="foot">
-        <span>Apache-2.0 · Midnight Compact · {backend.label}</span>
-        <span>{CONFIGURED_ADDRESS ? `Contract ${short(CONFIGURED_ADDRESS, 8)}` : 'Midnight Preview'}</span>
+        <span>Apache-2.0 · Compact contract simulator · no live wallet or settlement</span>
+        <span>Network deployment: not connected</span>
       </footer>
 
       <nav className="dock" aria-label="Mobile">

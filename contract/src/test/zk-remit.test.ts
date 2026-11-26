@@ -46,6 +46,7 @@ describe('ZK Remit Wave 3 contract', () => {
     expect(toHex(fresh.ledger.governorPk)).toBe(toHex(pureCircuits.governorPublicKey(governorSecret)));
     expect(toHex(fresh.ledger.settlementColor)).toBe(toHex(SETTLEMENT_COLOR));
     expect(fresh.ledger.epoch).toBe(1n);
+    expect(fresh.ledger.credentialGeneration).toBe(1n);
     expect(fresh.ledger.totalReceipts).toBe(0n);
   });
 
@@ -56,19 +57,40 @@ describe('ZK Remit Wave 3 contract', () => {
     expect(() => sim.advanceEpoch()).toThrow(/not the governor/);
   });
 
-  it('supports multiple issuers; revoked issuer cannot issue', () => {
+  it('revoking an issuer invalidates old credentials without revealing the issuer during sends', () => {
     const issuer2 = randomBytes();
     const pk2 = pureCircuits.issuerPublicKey(issuer2);
     sim.as({ governorSecret }).addIssuer(pk2);
     expect(sim.ledger.issuerCount).toBe(2n);
 
-    const cred = makeCredential(randomBytes(), pk2, TIER.BASIC, COUNTRY.USA, 5n);
+    const holderSecret = randomBytes();
+    const cred = makeCredential(holderSecret, pk2, TIER.BASIC, COUNTRY.USA, 5n);
     sim.as({ issuerSecret: issuer2 }).issueCredential(pureCircuits.credentialCommitment(cred));
 
+    const otherHolder = randomBytes();
+    const otherCred = makeCredential(otherHolder, issuerPk, TIER.BASIC, COUNTRY.USA, 5n);
+    sim.as({ issuerSecret }).issueCredential(pureCircuits.credentialCommitment(otherCred));
+
     sim.as({ governorSecret }).revokeIssuer(pk2);
-    const cred2 = makeCredential(randomBytes(), pk2, TIER.BASIC, COUNTRY.USA, 5n);
+    expect(sim.ledger.credentialGeneration).toBe(2n);
+    const cred2 = makeCredential(randomBytes(), pk2, TIER.BASIC, COUNTRY.USA, 5n, 2n);
     sim.as({ issuerSecret: issuer2 });
     expect(() => sim.issueCredential(pureCircuits.credentialCommitment(cred2))).toThrow(/issuer is not active/);
+
+    sim.as({ holderSecret, credential: cred });
+    expect(() => sim.sendRemittance(COUNTRY.MEXICO, 0n, bobTag, freshCoin(usd(10)))).toThrow(
+      /credential invalidated by issuer revocation/,
+    );
+    sim.as({ holderSecret: otherHolder, credential: otherCred });
+    expect(() => sim.sendRemittance(COUNTRY.MEXICO, 0n, bobTag, freshCoin(usd(10)))).toThrow(
+      /credential invalidated by issuer revocation/,
+    );
+
+    const renewedHolder = randomBytes();
+    const renewedCredential = makeCredential(renewedHolder, issuerPk, TIER.BASIC, COUNTRY.USA, 5n, 2n);
+    sim.as({ issuerSecret }).issueCredential(pureCircuits.credentialCommitment(renewedCredential));
+    sim.as({ holderSecret: renewedHolder, credential: renewedCredential });
+    expect(() => sim.sendRemittance(COUNTRY.MEXICO, 0n, bobTag, freshCoin(usd(10)))).not.toThrow();
   });
 
   it('private send: only corridor, band, nullifier and tags hit the ledger; status PENDING', () => {

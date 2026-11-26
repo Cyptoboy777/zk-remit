@@ -1,7 +1,7 @@
 /*
- * Midnight network backend: Lace + Midnight.js 4.1.
- * Deploy/call requires a real contract address (VITE_CONTRACT_ADDRESS) and user wallet.
- * Never invents addresses or transaction hashes.
+ * Wallet discovery helper and explicit unavailable-backend stub.
+ * Lace can be detected, but deploy/callTx/indexer wiring is not implemented here.
+ * Every operation fails closed; setting VITE_CONTRACT_ADDRESS does not enable live mode.
  */
 import semver from 'semver';
 import type { ConnectedAPI, InitialAPI } from '@midnight-ntwrk/dapp-connector-api';

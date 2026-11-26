@@ -1,94 +1,62 @@
-# ZK Remit — AKINDO Midnight Buildathon submission (Wave 3)
+# ZK Remit — AKINDO Midnight Buildathon, Wave 3
 
-**One-liner:** Zero-knowledge KYC for cross-border remittances — prove you're verified, within limits
-and on a licensed corridor without revealing who you are, how much you sent or who else you paid.
+**One-liner:** A privacy-first remittance prototype that models KYC eligibility, corridor policy, transfer limits, and selective disclosure with a Compact contract on Midnight.
 
-- Repo: https://github.com/Cyptoboy777/zk-remit (topic `midnightntwrk`, Apache-2.0)
-- Live demo: https://cyptoboy777.github.io/zk-remit/
-- Demo video: _(record from DEMO_SCRIPT.md)_ · Slides: [docs/ZK-Remit-slides.pdf](docs/ZK-Remit-slides.pdf) (Marp source: [SLIDES.md](SLIDES.md))
+- Repo: https://github.com/Cyptoboy777/zk-remit (Apache-2.0; `midnightntwrk` topic)
+- Interactive browser simulator: https://cyptoboy777.github.io/zk-remit/
+- Vercel website deployment: configured in `vercel.json`; deploy status/link must be added after Vercel publishes it
+- Demo video: not recorded yet; see [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md)
+- Slides: [`docs/ZK-Remit-slides.pdf`](docs/ZK-Remit-slides.pdf), authored in [`SLIDES.md`](SLIDES.md)
 
-## What it does
+## Prototype status
 
-ZK Remit is a compliance and receipt layer for remittance corridors (first: UAE → India).
+The hosted website executes the compiled Compact circuits in an in-browser runtime simulator. It does **not** connect to Midnight Preview, submit Lace transactions, use a deployed contract, or move real funds. The Lace discovery helper is not a live network adapter. Do not treat setting `VITE_CONTRACT_ADDRESS` as enabling live mode.
 
-1. **KYC attestor** (a licensed exchange house) verifies a migrant worker off-chain and publishes
-   only a **hash** of her credential (tier, residence country, expiry, holder key, salt) into an
-   on-chain Merkle tree.
-2. **Sender** generates a ZK proof that her credential is in that tree, belongs to her, is unexpired,
-   that her country→destination corridor is licensed, that the amount is within her tier cap, and
-   that she still has quota this month (via an unlinkable per-epoch nullifier). Only the corridor,
-   an amount band and the nullifier are disclosed.
-3. **Recipient** claims with a private claim key and the amount opening — once.
-4. **Auditor/regulator** gets *sender-controlled* disclosure: a challenge-bound proof of a single
-   receipt, or a read-only view key that lists exactly that sender's receipts.
+The seeded demo corridor is UAE → Philippines. UAE → India remains a product target and is not currently seeded as a demo corridor.
 
-## The problem
+## What the contract models
 
-Remittances (≈$685B to LMICs in 2024, World Bank est.; India is #1) are among the most
-data-hungry consumer payments: passport, visa, employer and salary data are copied to every
-intermediary, and on public blockchains the entire payment graph becomes permanent. Regulators need
-assurance and targeted auditability, not a public dossier on every migrant worker.
+1. A KYC issuer adds a credential commitment to a historic Merkle tree.
+2. A sender proves credential membership and holder binding, checks expiry and issuer revocation, applies corridor policy and tier caps, and consumes an epoch-scoped nullifier.
+3. The send circuit receives a shielded coin into escrow and publishes a receipt model. The recipient claims once; the sender can reclaim after the configured claim window.
+4. The sender can create a challenge-bound ownership proof or selectively reveal receipt metadata using a view key in the simulator.
 
-## How Midnight is used (core, not garnish)
+The public receipt model includes corridor, amount band, epoch, nullifier/receipt id, blinded tags, escrow commitment, and status. Identity, exact amount, credential, and holder secret are not stored as plain receipt fields. The claim QR contains bearer secrets and must only be shared with its intended recipient.
 
-- **Compact contract** with 5 witnesses (`issuerSecret`, `holderSecret`, `heldCredential`,
-  `credentialPath`, `recipientSecret`) and explicit `disclose()` on every public value.
-- **Dual ledger:** public state = issuer key, `HistoricMerkleTree` of credential commitments,
-  corridors `Set`, nullifiers `Set`, receipts `Map`, band `Counter`s; private state = secrets +
-  credential, persisted per contract address on the user's device.
-- **Selective disclosure as the product:** the receipt is the regulator-facing artifact; what's
-  disclosed (corridor, band) is a deliberate policy choice encoded in the circuit.
-- **Midnight.js 4.1 + Lace (DApp Connector v4)** for deploy / callTx / indexer state; proof keys
-  served alongside the dApp via `FetchZkConfigProvider`.
+## Midnight implementation
 
-## Challenges
+- Compact source: [`contract/src/zk-remit.compact`](contract/src/zk-remit.compact)
+- Pinned toolchain: compactc 0.31.1, Compact runtime 0.16.0, Midnight.js packages 4.1.1
+- Public ledger: issuer and revocation registries, corridor policies, historic credential tree, nullifiers, receipts, and counters
+- Private witnesses/state: issuer, holder, recipient, escrow opening, and Merkle paths
+- Issuer revocation advances a public global credential generation. Sends privately require the credential generation to match, invalidating all older credentials without disclosing which issuer a sender uses. This conservative design requires every holder to re-attest after any issuer revocation; a selective private non-membership accumulator is future work.
+- Tests: `npm test -w contract`; CI compiles the Compact source and builds the frontend
 
-- Expressing "N transfers per month" without a linkable per-user counter → nullifiers
-  `H(sk, epoch, slot)` with `slot < tierSlots(tier)` proven privately.
-- Toolchain alignment: latest compactc 0.35 targets ledger 9 / runtime 0.20, but the live networks
-  and Midnight.js 4.1.1 use runtime 0.16 / ledger 8 → pinned compactc 0.31.1 and test 0.35.0 in CI.
-- Running the compiled circuits in the browser (WASM runtime with Vite 8) for a zero-install demo.
-- Testnet faucets are captcha-gated and the proof server needs Docker, so the hosted demo ships a
-  faithful simulator mode while network mode is wired to Lace.
+## Delivered and still open
 
-## Tech
-
-Compact (compactc 0.31.1 / 0.35.0) · @midnight-ntwrk/compact-runtime 0.16 · Midnight.js 4.1.1 ·
-DApp Connector API 4.0.1 · Lace · React 19 · Vite 8 · Vitest 4 · GitHub Actions + Pages.
-
-## How it was built
-
-1. Threat model & disclosure policy table (what each party must / must not learn).
-2. Compact contract → `compactc` (7 circuits, prover/verifier keys).
-3. `ZkRemitSimulator` on the official runtime + 12 Vitest cases covering forged/stolen credentials,
-   tier caps, corridor policy, quota replay, expiry, claims, both audit modes.
-4. React dApp with a `Backend` abstraction: in-browser simulator or Lace/Midnight.js.
-5. CI compiles with the official compiler, runs tests and deploys the dApp + ZK keys to Pages.
-
-## Progress this wave
-
-_Baseline (pre-wave scaffold, 2026-10-20):_ contract, tests, simulator, dApp, CI/Pages.
-_Wave 3 deliverables (Oct 27 – Nov 16) — fill in as they land:_
-- [ ] Deployed on Midnight **Preview** via Lace (address + tx hashes here)
-- [ ] Shielded value leg: tDUST/stablecoin moved inside `sendRemittance` / `claim` (`receiveShielded` / `sendShielded`)
-- [ ] Non-membership **revocation** (sparse Merkle / revocation-epoch accumulator)
-- [ ] Rolling monthly **volume** cap via private accumulator (not just count × per-tx cap)
-- [ ] Issuer **signature** credentials (`jubjubSchnorrVerify`) so issuance can be off-chain/batched
-- [ ] Multi-device personas (separate sender / recipient / issuer apps), mobile-first sender UI
-- [ ] Payout-partner dashboard + CSV regulatory report (band volumes per corridor per epoch)
-
-## What's next / roadmap
-
-| Phase | Scope |
+| Area | Status |
 |---|---|
-| **Wave 3 (now)** | Preview deployment, shielded value leg, revocation, volume accumulator, polished multi-role UX, video + deck |
-| Post-buildathon M1 | Pilot design with one UAE exchange house + one Indian payout partner; FATF travel-rule mapping (encrypted originator info to the receiving VASP) |
-| M2 | Multi-issuer federation (any licensed KYC provider), corridor-specific policy modules, stablecoin rails |
-| M3 | Mainnet; mobile wallet integration (Kuira SDK) for migrant workers |
+| Compact contract and shielded escrow flow | Implemented and simulator-tested; not yet exercised on Preview |
+| Issuer revocation | Enforced at send time and covered by regression test |
+| Browser UX | Sender, recipient claim, issuer setup, activity, auditor view, privacy simulator; mobile navigation and amount validation |
+| Vercel website build | Configured to install pinned compactc, compile ZK keys, build the frontend, and serve `frontend/dist` |
+| Midnight Preview deployment and Lace calls | Not implemented; requires a deployed contract plus wallet/proof-server and transaction/indexer wiring |
+| Rolling monthly volume accumulator | Not implemented; current quota is a count of epoch-scoped slots plus per-transfer caps |
+| Issuer-signature credentials | Not implemented |
+| Multi-device personas and production payout partner dashboard | Not implemented |
+| Demo video | Not recorded |
 
-## Business model & audience
+## Build and run
 
-Exchange houses, remittance fintechs and payout partners pay per verified receipt (or SaaS per
-corridor); migrant senders get a cheaper, privacy-preserving rail and fewer repeated KYC checks.
-Wedge: GCC → India/Philippines corridors (very high volume, KYC-heavy, migrant-worker
-population with strong privacy concerns).
+```bash
+npm ci
+bash scripts/vercel-build.sh
+npm test -w contract
+npm run dev -w frontend
+```
+
+The Vercel build publishes only the simulator website. It does not deploy the Compact contract to Midnight. Do not publish a contract address or transaction hash unless it has been verified on the actual network.
+
+## Product direction
+
+The intended wedge is privacy-preserving compliance for GCC → India/Philippines remittances, with exchange houses and payout partners as potential customers. A production pilot would still need real Preview deployment, wallet and indexer integration, regulatory review, secure claim-link handling, signed issuer credentials, and a tested approach to rolling-volume limits.

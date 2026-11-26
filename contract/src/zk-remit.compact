@@ -19,6 +19,7 @@ export struct Credential {
   tier: Uint<8>;           // 1 BASIC, 2 VERIFIED, 3 ENHANCED
   country: Uint<16>;       // ISO-3166 numeric
   expiryEpoch: Uint<32>;
+  generation: Uint<32>;
   salt: Bytes<32>;
 }
 
@@ -60,12 +61,14 @@ export struct EscrowOpening {
 
 export ledger governorPk: Bytes<32>;
 export ledger settlementColor: Bytes<32>;
-// Append-only issuer registry (Compact MerkleTree/HistoricMerkleTree insert returns void; no leaf overwrite).
-// Revocation is tracked in revokedIssuers and enforced at issue time (issuer identity is public on issue txs).
-// Which issuer attested a *credential* stays private at send time via Merkle membership of the credential leaf.
+// Append-only issuer registry; issuer identity is public on issue/revoke transactions.
+// A public Set lookup by private issuer key would reveal that key during send, so revocation
+// advances a global credential generation. This preserves issuer privacy but requires all holders
+// to receive a fresh credential after any issuer is revoked.
 export ledger activeIssuers: HistoricMerkleTree<4, Bytes<32>>;
 export ledger revokedIssuers: Set<Bytes<32>>;
 export ledger issuerCount: Counter;
+export ledger credentialGeneration: Counter;
 export ledger corridorPolicy: Map<Uint<32>, CorridorPolicy>;
 export ledger epoch: Counter;
 export ledger credentials: HistoricMerkleTree<16, Bytes<32>>;
@@ -93,6 +96,7 @@ constructor(governor: Bytes<32>, color: Bytes<32>) {
   governorPk = disclose(governor);
   settlementColor = disclose(color);
   epoch.increment(1);
+  credentialGeneration.increment(1);
   for (const b of [0, 1, 2, 3]) {
     bandVolume.insert(b as Uint<8>, default<Counter>);
   }
@@ -202,7 +206,14 @@ export circuit addIssuer(pk: Bytes<32>): [] {
 
 export circuit revokeIssuer(pk: Bytes<32>): [] {
   assertGovernor();
-  revokedIssuers.insert(disclose(pk));
+  const issuer = disclose(pk);
+  const path = issuerPath(pk);
+  assert(path.leaf == issuer, "ZKR: issuer path does not match");
+  assert(activeIssuers.checkRoot(disclose(merkleTreePathRoot<4, Bytes<32>>(path))),
+         "ZKR: issuer is not registered");
+  assert(!revokedIssuers.member(issuer), "ZKR: issuer already revoked");
+  revokedIssuers.insert(issuer);
+  credentialGeneration.increment(1);
 }
 
 export circuit issueCredential(commitment: Bytes<32>): [] {
@@ -265,6 +276,8 @@ export circuit sendRemittance(
   assert(ip.leaf == cred.issuerPk, "ZKR: issuer path does not match credential");
   assert(activeIssuers.checkRoot(disclose(merkleTreePathRoot<4, Bytes<32>>(ip))),
          "ZKR: credential issuer is not active");
+  assert(cred.generation == credentialGeneration.read() as Uint<32>,
+         "ZKR: credential invalidated by issuer revocation; re-attestation required");
 
   const ep = epoch.read() as Uint<32>;
   assert(cred.expiryEpoch >= ep, "ZKR: credential expired");
