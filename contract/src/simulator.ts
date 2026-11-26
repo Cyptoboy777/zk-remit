@@ -84,7 +84,7 @@ type ImpureName = keyof Contract<ZkRemitPrivateState>['impureCircuits'];
  * `withEscrow()` only change local private state and stay synchronous for easy chaining.
  */
 export class ZkRemitSimulator {
-  readonly contract: Contract<ZkRemitPrivateState>;
+  contract: Contract<ZkRemitPrivateState>;
   readonly settlementColor: Uint8Array;
   readonly contractAddress = sampleContractAddress();
   /** Resolves once the constructor has run. Every circuit call awaits it. */
@@ -111,6 +111,20 @@ export class ZkRemitSimulator {
         this.ledgerState = r.currentContractState;
         this.ps = { ...r.currentPrivateState, ...this.ps };
       });
+  }
+
+  /**
+   * Test hook: replace some witnesses with dishonest ones, to prove the circuit guards (not just
+   * an honest client) are what stops a forged Merkle path or a foreign credential. Call
+   * `honestWitnesses()` to undo. Never used by the app.
+   */
+  withWitnesses(overrides: Partial<typeof witnesses>) {
+    this.contract = new Contract<ZkRemitPrivateState>({ ...witnesses, ...overrides } as typeof witnesses);
+    return this;
+  }
+  honestWitnesses() {
+    this.contract = new Contract<ZkRemitPrivateState>(witnesses);
+    return this;
   }
 
   /** Convenience: construct and wait for the constructor. */

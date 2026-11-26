@@ -1,0 +1,3 @@
+{
+  "reclaim :: assert(corridorPolicy.member(key), \"ZKR: corridor not approved\");": "Unreachable by design: a receipt can only exist for a corridor that was approved at send time, and no circuit removes a corridor policy (closeCorridor only sets open=false). Kept as defence in depth in case a future circuit deletes policies."
+}

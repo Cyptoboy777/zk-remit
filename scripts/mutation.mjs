@@ -12,6 +12,10 @@ const src = join(root, 'contract/src/zk-remit.compact');
 const out = join(root, 'contract/src/managed/zk-remit');
 const backup = join(root, 'contract/src/.managed-backup');
 const original = readFileSync(src, 'utf8');
+// Guards no test can reach, with the reason. Keyed by circuit and exact statement text.
+const allow = existsSync(join(root, 'contract/mutation-allowlist.json'))
+  ? JSON.parse(readFileSync(join(root, 'contract/mutation-allowlist.json'), 'utf8'))
+  : {};
 const only = process.argv.includes('--only') ? Number(process.argv[process.argv.indexOf('--only') + 1]) : null;
 
 // Find each assert( ... ); statement, matching parentheses and skipping strings.
@@ -29,7 +33,9 @@ for (let i = original.indexOf('assert('); i !== -1; i = original.indexOf('assert
   const end = original.indexOf(';', j) + 1;
   const text = original.slice(i, end);
   const msg = text.match(/"([^"]+)"\s*\)\s*;$/)?.[1] ?? text.slice(0, 50);
-  guards.push({ start: i, end, msg, line: original.slice(0, i).split('\n').length });
+  const circuit = [...original.slice(0, i).matchAll(/circuit\s+(\w+)/g)].pop()?.[1] ?? '?';
+  const key = `${circuit} :: ${text.replace(/\s+/g, ' ')}`;
+  guards.push({ start: i, end, msg, key, line: original.slice(0, i).split('\n').length });
 }
 
 const compile = () =>
@@ -57,7 +63,7 @@ guards.forEach((g, n) => {
   let verdict;
   const c = compile();
   if (c.status !== 0) verdict = 'uncompilable';
-  else verdict = tests().status !== 0 ? 'killed' : 'SURVIVED';
+  else verdict = tests().status !== 0 ? 'killed' : allow[g.key] ? 'unreachable' : 'SURVIVED';
   rows.push({ n, line: g.line, msg: g.msg, verdict });
   console.log(`${String(n).padStart(2)}  line ${String(g.line).padStart(3)}  ${verdict.padEnd(12)} ${g.msg}`);
 });
@@ -65,7 +71,8 @@ writeFileSync(src, original);
 
 const killed = rows.filter((r) => r.verdict === 'killed').length;
 const survived = rows.filter((r) => r.verdict === 'SURVIVED');
+const unreachable = rows.filter((r) => r.verdict === 'unreachable').length;
 const skipped = rows.filter((r) => r.verdict === 'uncompilable').length;
-console.log(`\nMUTATION ${killed} of ${rows.length - skipped} guards caught by a test (${skipped} uncompilable skipped, ${survived.length} survived)`);
+console.log(`\nMUTATION ${killed} of ${rows.length - skipped - unreachable} reachable guards caught by a test (${unreachable} unreachable and documented, ${skipped} uncompilable skipped, ${survived.length} survived)`);
 survived.forEach((r) => console.log(`SURVIVED line ${r.line}: ${r.msg}`));
 process.exit(survived.length ? 1 : 0);

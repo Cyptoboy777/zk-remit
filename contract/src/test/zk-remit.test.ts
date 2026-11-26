@@ -13,6 +13,7 @@ import {
   TEST_MINT_CAP_CENTS,
 } from '../simulator.js';
 import type { ZkRemitPrivateState } from '../witnesses.js';
+import type { witnesses } from '../witnesses.js';
 
 const usd = (d: number) => BigInt(Math.round(d * 100));
 
@@ -549,5 +550,115 @@ describe('security audit (SECURITY.md findings)', () => {
     await expect(sim.as({ governorSecret }).mintTestSettlement(1n)).rejects.toThrow(/not enabled/);
     await sim.enableTestMint();
     await expect(sim.mintTestSettlement(TEST_MINT_CAP_CENTS + 1n)).rejects.toThrow(/per-call cap/);
+  });
+});
+
+describe('guards that an honest client never trips (mutation survivors, now covered)', () => {
+  const governorSecret = randomBytes();
+  let sim: ZkRemitSimulator;
+  let issuerSecret: Uint8Array;
+  let issuerPk: Uint8Array;
+  let issuer2Pk: Uint8Array;
+  let alice: ZkRemitPrivateState;
+  let aliceLeaf: Uint8Array;
+  let bobLeaf: Uint8Array;
+  let bobTag: Uint8Array;
+  type Ctx = Parameters<typeof witnesses.issuerPath>[0];
+
+  beforeEach(async () => {
+    sim = await ZkRemitSimulator.create(governorSecret);
+    issuerSecret = randomBytes();
+    issuerPk = pureCircuits.issuerPublicKey(issuerSecret);
+    issuer2Pk = pureCircuits.issuerPublicKey(randomBytes());
+    await sim.as({ governorSecret }).addIssuer(issuerPk);
+    await sim.addIssuer(issuer2Pk);
+    await sim.setCorridorPolicy(COUNTRY.UAE, COUNTRY.PHILIPPINES, defaultPolicy());
+    const aliceSecret = randomBytes();
+    const credential = makeCredential(aliceSecret, issuerPk, TIER.VERIFIED, COUNTRY.UAE, 50n);
+    aliceLeaf = pureCircuits.credentialCommitment(credential);
+    const bobCred = makeCredential(randomBytes(), issuerPk, TIER.VERIFIED, COUNTRY.UAE, 50n);
+    bobLeaf = pureCircuits.credentialCommitment(bobCred);
+    await sim.as({ issuerSecret }).issueCredential(aliceLeaf);
+    await sim.issueCredential(bobLeaf);
+    alice = { holderSecret: aliceSecret, credential };
+    bobTag = pureCircuits.recipientTagOf(randomBytes());
+    sim.as(alice);
+  });
+
+  const send = () => sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(20)));
+
+  it('rejects a Merkle path that belongs to a different credential', async () => {
+    sim.withWitnesses({
+      credentialPath: ({ privateState, ledger }: Ctx) =>
+        [privateState, ledger.credentials.findPathForLeaf(bobLeaf)!] as never,
+    });
+    await expect(send()).rejects.toThrow(/merkle path does not match credential/);
+  });
+
+  it('rejects a forged credential path whose root was never on the ledger', async () => {
+    sim.withWitnesses({
+      credentialPath: ({ privateState, ledger }: Ctx) =>
+        [privateState, { ...ledger.credentials.findPathForLeaf(bobLeaf)!, leaf: aliceLeaf }] as never,
+    });
+    await expect(send()).rejects.toThrow(/not issued by the KYC attestor/);
+  });
+
+  it('rejects an issuer path that belongs to a different issuer (send)', async () => {
+    sim.withWitnesses({
+      issuerPath: ({ privateState, ledger }: Ctx) =>
+        [privateState, ledger.activeIssuers.findPathForLeaf(issuer2Pk)!] as never,
+    });
+    await expect(send()).rejects.toThrow(/issuer path does not match credential/);
+  });
+
+  it('rejects a forged issuer path whose root is not on the ledger (send)', async () => {
+    sim.withWitnesses({
+      issuerPath: ({ privateState, ledger }: Ctx) =>
+        [privateState, { ...ledger.activeIssuers.findPathForLeaf(issuer2Pk)!, leaf: issuerPk }] as never,
+    });
+    await expect(send()).rejects.toThrow(/credential issuer is not active/);
+  });
+
+  it('rejects issuing with a path that belongs to a different issuer', async () => {
+    sim.as({ issuerSecret }).withWitnesses({
+      issuerPath: ({ privateState, ledger }: Ctx) =>
+        [privateState, ledger.activeIssuers.findPathForLeaf(issuer2Pk)!] as never,
+    });
+    await expect(sim.issueCredential(randomBytes())).rejects.toThrow(/issuer path does not match/);
+  });
+
+  it('rejects issuing with a forged issuer path', async () => {
+    sim.as({ issuerSecret }).withWitnesses({
+      issuerPath: ({ privateState, ledger }: Ctx) =>
+        [privateState, { ...ledger.activeIssuers.findPathForLeaf(issuer2Pk)!, leaf: issuerPk }] as never,
+    });
+    await expect(sim.issueCredential(randomBytes())).rejects.toThrow(/caller is not an active issuer/);
+  });
+
+  it('refuses to close a corridor that does not exist', async () => {
+    await expect(sim.as({ governorSecret }).closeCorridor(COUNTRY.UAE, COUNTRY.SPAIN)).rejects.toThrow(/corridor not approved/);
+  });
+
+  it('enforces the corridor amount band, separately from the tier cap', async () => {
+    await sim.as({ governorSecret }).setCorridorPolicy(COUNTRY.UAE, COUNTRY.PHILIPPINES, defaultPolicy({ maxBand: 0n }));
+    sim.as(alice);
+    await expect(sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(200)))).rejects.toThrow(/amount band not allowed/);
+    await expect(sim.sendRemittance(COUNTRY.PHILIPPINES, 1n, bobTag, freshCoin(usd(50)))).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it('rejects reclaim and ownership proofs for a receipt that does not exist', async () => {
+    await expect(sim.reclaim(randomBytes())).rejects.toThrow(/unknown receipt/);
+    await expect(sim.proveReceiptOwnership(randomBytes(), randomBytes())).rejects.toThrow(/unknown receipt/);
+  });
+
+  it('reclaim also checks the escrow opening against the commitment', async () => {
+    const id1 = await sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(20)));
+    const id2 = await sim.sendRemittance(COUNTRY.PHILIPPINES, 1n, bobTag, freshCoin(usd(30)));
+    const opening2 = sim.privateState.escrows![toHex(id2)];
+    await sim.as({ governorSecret }).advanceEpoch();
+    await sim.advanceEpoch();
+    await sim.advanceEpoch();
+    await expect(sim.as(alice).withEscrow(id1, opening2).reclaim(id1)).rejects.toThrow(/escrow opening does not match/);
+    expect(sim.ledger.receipts.lookup(id1).status).toBe(ReceiptStatus.PENDING);
   });
 });
