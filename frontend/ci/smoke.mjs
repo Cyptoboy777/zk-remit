@@ -44,9 +44,11 @@ await step('privacy explorer is interactive', async () => {
   await page.waitForSelector('.explorer-sum:has-text("Recipient")', { timeout: 5000 });
 });
 await step('simulator send produces a claim link', async () => {
-  await page.click('.nav-link:has-text("Send")');
-  await page.click('button:has-text("Seed")', { timeout: 20000 }).catch(() => page.click('.btn.primary >> nth=0'));
-  await page.waitForSelector('.send-cta:not([disabled])', { timeout: 120000 });
+  // A deployment is recorded, so the app opens in Preview mode (needs Lace). Use the simulator here.
+  await page.click('.mode-toggle button:has-text("Simulator")');
+  await page.click('.nav-link:has-text("Home")');
+  await page.click('button:has-text("Start a demo transfer")');
+  await page.waitForSelector('.send-cta:not([disabled])', { timeout: 180000 });
   await page.click('.send-cta');
   await page.click('.nav-link:has-text("Claim")');
   await page.waitForSelector('img.qr', { timeout: 180000 });
