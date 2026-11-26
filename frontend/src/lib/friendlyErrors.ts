@@ -42,7 +42,7 @@ const COPY: Record<Exclude<Problem, 'contract'>, { title: string; body: string }
   },
   'no-dust': {
     title: 'Your wallet has no tDUST yet',
-    body: 'Transactions need tDUST for fees. Get test tNIGHT from the Preview faucet, then use Lace to generate tDUST. It can take a few minutes to appear.',
+    body: 'Transactions need tDUST for fees. Get test tNIGHT from the Preview faucet, then generate tDUST. It can take a few minutes to appear.',
   },
   'no-settlement': {
     title: 'No settlement tokens in your wallet',

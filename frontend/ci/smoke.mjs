@@ -1,0 +1,67 @@
+// CI smoke test: loads the built app in a real Chromium under the shipped Content-Security-Policy,
+// runs a simulator send, and fails on any CSP violation, page error or missing step.
+// Usage: node ci/smoke.mjs http://localhost:4173
+import { chromium } from 'playwright';
+
+const base = process.argv[2] ?? 'http://localhost:4173';
+const problems = [];
+const browser = await chromium.launch();
+const page = await browser.newPage();
+page.on('pageerror', (e) => problems.push(`pageerror: ${e.message}`));
+page.on('console', (m) => {
+  const t = m.text();
+  if (/content security policy|refused to/i.test(t)) problems.push(`csp: ${t}`);
+});
+await page.addInitScript(() => {
+  document.addEventListener('securitypolicyviolation', (e) => console.error(`Refused to load: ${e.violatedDirective} ${e.blockedURI}`));
+});
+
+const step = async (name, fn) => {
+  try {
+    await fn();
+    console.log(`ok   ${name}`);
+  } catch (e) {
+    problems.push(`${name}: ${String(e.message).split('\n')[0]}`);
+    console.log(`FAIL ${name}`);
+  }
+};
+
+await page.goto(base, { waitUntil: 'load' });
+await step('first paint hero is visible before the app starts', () => page.waitForSelector('.home-hero', { timeout: 10000 }));
+await step('CSP meta is present', async () => {
+  const c = await page.getAttribute('meta[http-equiv="Content-Security-Policy"]', 'content');
+  if (!c || !c.includes("script-src 'self'")) throw new Error('missing CSP meta');
+});
+await step('app starts', async () => {
+  await page.click('[data-boot-tab="send"]');
+  await page.waitForSelector('#root:not([aria-busy])', { timeout: 60000 });
+  await page.waitForSelector('.send-layout', { timeout: 60000 });
+});
+await step('privacy explorer is interactive', async () => {
+  await page.click('.nav-link:has-text("Home")');
+  await page.waitForSelector('.explorer', { timeout: 20000 });
+  await page.click('.seg button:has-text("Claim")');
+  await page.waitForSelector('.explorer-sum:has-text("Recipient")', { timeout: 5000 });
+});
+await step('simulator send produces a claim link', async () => {
+  await page.click('.nav-link:has-text("Send")');
+  await page.click('button:has-text("Seed")', { timeout: 20000 }).catch(() => page.click('.btn.primary >> nth=0'));
+  await page.waitForSelector('.send-cta:not([disabled])', { timeout: 120000 });
+  await page.click('.send-cta');
+  await page.click('.nav-link:has-text("Claim")');
+  await page.waitForSelector('img.qr', { timeout: 180000 });
+  const text = await page.textContent('.qr-card');
+  if (!/Anyone who opens this link can claim/.test(text ?? '')) throw new Error('bearer warning missing');
+});
+await step('claim link keeps secrets in the fragment only', async () => {
+  const link = (await page.textContent('.qr-card .mono')) ?? '';
+  const u = new URL(link.trim());
+  if (u.search !== '' || !u.hash.startsWith('#claim=')) throw new Error('secret outside fragment');
+});
+
+await browser.close();
+if (problems.length) {
+  console.error('\nSmoke test problems:\n- ' + problems.join('\n- '));
+  process.exit(1);
+}
+console.log('\nSmoke test passed');

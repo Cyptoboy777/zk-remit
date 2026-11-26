@@ -452,3 +452,102 @@ describe('escrow lifecycle edge cases (Wave 3 QA)', () => {
     expect(sim.ledger.receipts.lookup(id).status).toBe(ReceiptStatus.CLAIMED);
   });
 });
+
+describe('security audit (SECURITY.md findings)', () => {
+  const governorSecret = randomBytes();
+  let sim: ZkRemitSimulator;
+  let issuerSecret: Uint8Array;
+  let issuerPk: Uint8Array;
+  let alice: ZkRemitPrivateState;
+  let bobSecret: Uint8Array;
+  let bobTag: Uint8Array;
+
+  beforeEach(async () => {
+    sim = await ZkRemitSimulator.create(governorSecret);
+    issuerSecret = randomBytes();
+    issuerPk = pureCircuits.issuerPublicKey(issuerSecret);
+    await sim.as({ governorSecret }).addIssuer(issuerPk);
+    await sim.setCorridorPolicy(COUNTRY.UAE, COUNTRY.PHILIPPINES, defaultPolicy());
+    const aliceSecret = randomBytes();
+    const credential = makeCredential(aliceSecret, issuerPk, TIER.VERIFIED, COUNTRY.UAE, 5n);
+    await sim.as({ issuerSecret }).issueCredential(pureCircuits.credentialCommitment(credential));
+    alice = { holderSecret: aliceSecret, credential };
+    bobSecret = randomBytes();
+    bobTag = pureCircuits.recipientTagOf(bobSecret);
+    sim.as(alice);
+  });
+
+  it('S1 replay: an opening taken from another receipt cannot release this escrow', async () => {
+    const id1 = await sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(20)));
+    const id2 = await sim.sendRemittance(COUNTRY.PHILIPPINES, 1n, bobTag, freshCoin(usd(30)));
+    const other = sim.privateState.escrows![toHex(id2)];
+    await expect(sim.as({ recipientSecret: bobSecret }).withEscrow(id1, other).claim(id1)).rejects.toThrow(/escrow opening does not match/);
+    expect(sim.ledger.receipts.lookup(id1).status).toBe(ReceiptStatus.PENDING);
+  });
+
+  it('S2 expiry: a credential stops working once the epoch passes its expiry', async () => {
+    await sim.as({ governorSecret });
+    for (let i = 0; i < 5; i++) await sim.advanceEpoch(); // epoch 1 -> 6, credential expires at 5
+    await expect(sim.as(alice).sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(20)))).rejects.toThrow(/credential expired/);
+  });
+
+  it('S3 limits: exactly the tier cap is accepted and one cent more is rejected', async () => {
+    await sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(1000_00n));
+    await expect(sim.sendRemittance(COUNTRY.PHILIPPINES, 1n, bobTag, freshCoin(1000_01n))).rejects.toThrow(/exceeds tier limit/);
+  });
+
+  it('S4 quota: a slot cannot be reused in the same epoch, and the nullifier differs every epoch', async () => {
+    await sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(5)));
+    await expect(sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(5)))).rejects.toThrow(/slot already used/);
+    const sk = alice.holderSecret!;
+    expect(toHex(pureCircuits.nullifierOf(sk, 1n, 0n))).not.toBe(toHex(pureCircuits.nullifierOf(sk, 2n, 0n)));
+  });
+
+  it('S5 privacy: a fresh recipient secret per transfer gives unlinkable public tags', async () => {
+    const tags = new Set(Array.from({ length: 20 }, () => toHex(pureCircuits.recipientTagOf(randomBytes()))));
+    expect(tags.size).toBe(20);
+    expect(toHex(pureCircuits.recipientTagOf(bobSecret))).toBe(toHex(bobTag)); // same secret, same tag (what linking would exploit)
+  });
+
+  it('S6 disclosure: a different holder cannot prove ownership of someone else’s receipt', async () => {
+    const id = await sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(5)));
+    await expect(sim.as({ holderSecret: randomBytes() }).proveReceiptOwnership(id, randomBytes())).rejects.toThrow(/not sent by this holder/);
+    await sim.as(alice).proveReceiptOwnership(id, randomBytes());
+    expect(sim.ledger.ownershipProofs.size()).toBe(1n);
+  });
+
+  it('S7 only the governor controls issuers, corridors and test funds', async () => {
+    const stranger = { governorSecret: randomBytes() };
+    await expect(sim.as(stranger).addIssuer(randomBytes())).rejects.toThrow(/not the governor/);
+    await expect(sim.as(stranger).revokeIssuer(issuerPk)).rejects.toThrow(/not the governor/);
+    await expect(sim.as(stranger).closeCorridor(COUNTRY.UAE, COUNTRY.PHILIPPINES)).rejects.toThrow(/not the governor/);
+    await expect(sim.as(stranger).enableTestMint()).rejects.toThrow(/not the governor/);
+  });
+
+  it('S8 known limit (documented): revoking an issuer blocks new credentials, not ones already issued', async () => {
+    await sim.as({ governorSecret }).revokeIssuer(issuerPk);
+    const late = makeCredential(randomBytes(), issuerPk, TIER.VERIFIED, COUNTRY.UAE, 5n);
+    await expect(sim.as({ issuerSecret }).issueCredential(pureCircuits.credentialCommitment(late))).rejects.toThrow(/issuer is not active/);
+    // The send circuit keeps the issuer private, so it cannot test the public revocation set.
+    // Fix needs a contract change (see SECURITY.md); until then, short credential expiry bounds the exposure.
+    await expect(sim.as(alice).sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(5)))).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it('S9 trust assumption (documented): the governor can lengthen the claim window of pending escrows', async () => {
+    const id = await sim.sendRemittance(COUNTRY.PHILIPPINES, 0n, bobTag, freshCoin(usd(25)));
+    const opening = sim.privateState.escrows![toHex(id)];
+    await sim.as({ governorSecret }).setCorridorPolicy(COUNTRY.UAE, COUNTRY.PHILIPPINES, defaultPolicy({ claimWindow: 50n }));
+    await sim.advanceEpoch();
+    await sim.advanceEpoch();
+    await expect(sim.as(alice).withEscrow(id, opening).reclaim(id)).rejects.toThrow(/claim window still open/);
+    // The recipient can still claim, so funds are delayed for the sender, never taken.
+    await sim.as({ recipientSecret: bobSecret }).withEscrow(id, opening).claim(id);
+    expect(sim.ledger.receipts.lookup(id).status).toBe(ReceiptStatus.CLAIMED);
+  });
+
+  it('S10 test funds are off by default and capped, so a production deployment cannot mint', async () => {
+    await expect(sim.as({ governorSecret }).mintTestSettlement(1n)).rejects.toThrow(/not enabled/);
+    await sim.enableTestMint();
+    await expect(sim.mintTestSettlement(TEST_MINT_CAP_CENTS + 1n)).rejects.toThrow(/per-call cap/);
+  });
+});

@@ -1,4 +1,4 @@
-// JSON codec that round-trips bigint and Uint8Array (for localStorage + payment links).
+// JSON codec that round-trips bigint and Uint8Array (for sealed local storage + claim links).
 export const encode = (v: unknown): string =>
   JSON.stringify(v, (_k, x) =>
     typeof x === 'bigint' ? { $b: x.toString() } : x instanceof Uint8Array ? { $u: Array.from(x) } : x,

@@ -54,5 +54,11 @@ root.addEventListener(
   true,
 );
 
-if (location.hash.length > 1) start();
-else EVENTS.forEach((e) => addEventListener(e, start, { capture: true, passive: true }));
+EVENTS.forEach((e) => addEventListener(e, start, { capture: true, passive: true }));
+// A claim link starts the app too, but only once the static page has painted and the browser is idle,
+// so the first view stays fast on slow phones.
+if (location.hash.length > 1) {
+  const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
+  if (idle) idle(start, { timeout: 1500 });
+  else setTimeout(start, 600);
+}

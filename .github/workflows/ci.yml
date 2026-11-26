@@ -2,7 +2,7 @@ name: CI — compile Compact, test, build
 
 on:
   push:
-    branches: [main, testnet-live, wave3-top]
+    branches: [main, testnet-live, wave3-top, wave3-master]
   pull_request:
 
 jobs:
@@ -44,3 +44,29 @@ jobs:
           name: frontend-dist
           path: frontend/dist
           retention-days: 7
+
+      - name: Dependency audit (production dependencies)
+        if: matrix.compactc == '0.36.1'
+        continue-on-error: true
+        run: npm audit --omit=dev --audit-level=high
+      - name: Browser smoke test under the shipped CSP
+        if: matrix.compactc == '0.36.1'
+        working-directory: frontend
+        run: |
+          npm install --no-save --no-package-lock playwright@1.49.1
+          npx playwright install --with-deps chromium
+          (npm run preview -- --port 4173 --strictPort > /tmp/preview.log 2>&1 &)
+          npx -y wait-on@8 http://localhost:4173 --timeout 60000
+          node ci/smoke.mjs http://localhost:4173
+      - name: Lighthouse (home and claim link)
+        if: matrix.compactc == '0.36.1'
+        working-directory: frontend
+        run: node ci/lighthouse.mjs http://localhost:4173 lighthouse
+      - name: Save Lighthouse reports
+        if: always() && matrix.compactc == '0.36.1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse
+          path: frontend/lighthouse
+          if-no-files-found: ignore
+          retention-days: 14

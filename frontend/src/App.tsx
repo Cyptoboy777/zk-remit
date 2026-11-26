@@ -21,9 +21,11 @@ import { MidnightProblem, friendlyError, friendlyLine, type Friendly } from './l
 import type { Backend, LedgerSnapshot } from './lib/types';
 import { buildDisclosure, BAND_LABELS, amountBandOf } from './lib/disclosure';
 import { anonymitySetSize } from './lib/anonymity';
-import { buildClaimHash, parseClaimHash, qrDataUrl, type ClaimPayload } from './lib/claimLink';
+import { buildClaimLink, clearClaimFromUrl, freshRecipientSecret, parseClaimHash, qrDataUrl, scrubPayload, type ClaimPayload } from './lib/claimLink';
+import { localTextStore, migrateLegacy, secureStore } from './lib/secureStore';
+import { PRIVATE_STATE_PREFIX } from './lib/privateStateProvider';
 import { LOCALES, t, type Locale } from './lib/i18n';
-import { decode, encode, fromHex } from './lib/codec';
+import { fromHex } from './lib/codec';
 const PrivacySimulator = lazy(() => import('./privacy/PrivacySimulator'));
 import { ChainReadback } from './ui/ChainReadback';
 import { BrandMark } from './ui/BrandMark';
@@ -31,6 +33,9 @@ import { ClaimGuide } from './ui/ClaimGuide';
 import { CorridorFlags, Flag } from './ui/flags';
 import { ActivityList, statusOf } from './ui/ActivityList';
 import AuditPanel from './ui/AuditPanel';
+import { PrivacyExplorer } from './ui/PrivacyExplorer';
+import { ProofProgress } from './ui/ProofProgress';
+import { DustHelp } from './ui/DustHelp';
 
 type Tab = 'home' | 'send' | 'claim' | 'issuer' | 'auditor' | 'sim' | 'whatsnew' | 'activity';
 
@@ -83,7 +88,7 @@ const NAV: { id: Tab; label: 'nav_home' | 'nav_send' | 'nav_claim' | 'nav_issuer
 ];
 
 type Personas = { governor: ZkRemitPrivateState; issuer: ZkRemitPrivateState; sender: ZkRemitPrivateState; recipient: ZkRemitPrivateState };
-type Sent = { id: string; amount: bigint; link: string; qr?: string };
+type Sent = { id: string; amount: bigint; link: string; qr?: string; recipientSecret: Uint8Array };
 
 const freshPersonas = (): Personas => {
   const governorSecret = randomBytes();
@@ -102,20 +107,10 @@ type Conn = { status: 'idle' | 'connecting' | 'ready' | 'problem'; problem?: Fri
 
 const personaKey = (address: string) => `zkremit:persona:${address}`;
 const operatorKey = (address: string) => `zkremit:operator:${address}`;
-const readStore = <T,>(key: string): T | null => {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? decode<T>(raw) : null;
-  } catch {
-    return null;
-  }
-};
+// Secrets are sealed with a non-extractable device key before they touch disk (see lib/secureStore.ts).
+const readStore = <T,>(key: string): Promise<T | null> => secureStore.get<T>(key).catch(() => null);
 const writeStore = (key: string, value: unknown) => {
-  try {
-    localStorage.setItem(key, encode(value));
-  } catch {
-    /* storage unavailable (private mode): keep working in memory */
-  }
+  void secureStore.set(key, value).catch(() => undefined);
 };
 const HEX64 = /^[0-9a-fA-F]{64}$/;
 /** Operator file written by the deploy script: { governorSecret, issuerSecret } as 64-char hex. */
@@ -150,7 +145,14 @@ export default function App() {
   const [conn, setConn] = useState<Conn>({ status: 'idle' });
   const [stage, setStage] = useState<Stage | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [operator, setOperator] = useState<Operator | null>(() => (deployment ? readStore<Operator>(operatorKey(deployment.contractAddress)) : null));
+  const [operator, setOperator] = useState<Operator | null>(null);
+  useEffect(() => {
+    // One-time: re-seal anything an older build left unencrypted, then load the operator keys.
+    void (async () => {
+      await migrateLegacy(secureStore, localTextStore(), ['zkremit:persona:', 'zkremit:operator:', PRIVATE_STATE_PREFIX]).catch(() => 0);
+      if (deployment) setOperator(await readStore<Operator>(operatorKey(deployment.contractAddress)));
+    })();
+  }, [deployment]);
   const [operatorText, setOperatorText] = useState('');
   const [operatorBad, setOperatorBad] = useState(false);
   const live = mode === 'preview' && conn.status === 'ready';
@@ -195,7 +197,6 @@ export default function App() {
       push('ok', label, d || undefined);
     } catch (e) {
       const f = friendlyError(e);
-      console.debug('[zk-remit]', e);
       push('err', f.problem === 'contract' ? `${label} — rejected` : label, friendlyLine(e));
       setNotice({ kind: 'err', title: f.title, body: f.body });
     } finally {
@@ -240,7 +241,7 @@ export default function App() {
     try {
       const { MidnightBackend } = await import('./lib/midnightBackend');
       const b = await MidnightBackend.connect(deployment, setStage);
-      const stored = readStore<{ sender: ZkRemitPrivateState; recipient: ZkRemitPrivateState }>(personaKey(deployment.contractAddress));
+      const stored = await readStore<{ sender: ZkRemitPrivateState; recipient: ZkRemitPrivateState }>(personaKey(deployment.contractAddress));
       if (stored) {
         setPersonas((p) => ({ ...p, sender: stored.sender, recipient: stored.recipient }));
         setSetupDone(!!stored.sender?.credential);
@@ -249,7 +250,6 @@ export default function App() {
       setConn({ status: 'ready' });
       push('ok', 'Connected to Midnight Preview');
     } catch (e) {
-      console.debug('[zk-remit]', e);
       setConn({ status: 'problem', problem: friendlyError(e) });
     } finally {
       setStage(null);
@@ -332,7 +332,9 @@ export default function App() {
       if (!personas.sender.credential) throw new Error('Seed the demo first (issuer + credential).');
       // On Preview the contract records the real settlement colour on the first test mint; use it.
       const coin = freshCoin(BigInt(cents), live && snap ? fromHex(snap.settlementColor) : SETTLEMENT_COLOR);
-      const tag = pureCircuits.recipientTagOf(personas.recipient.recipientSecret!);
+      // A fresh recipient key per transfer: the public recipient tag cannot link two transfers to one person.
+      const recipientSecret = freshRecipientSecret();
+      const tag = pureCircuits.recipientTagOf(recipientSecret);
       // The receipt id is the nullifier, so a slot is free when its nullifier is not on the ledger yet.
       const used = new Set(receipts.map((r) => r.id));
       let slot = 0n;
@@ -345,13 +347,12 @@ export default function App() {
         receiptId: toHex(receiptId),
         coin: { nonce: toHex(opening.coin.nonce), color: toHex(opening.coin.color), value: String(opening.coin.value) },
         salt: toHex(opening.salt),
-        recipientSecret: toHex(personas.recipient.recipientSecret!),
+        recipientSecret: toHex(recipientSecret),
         network: mode === 'preview' ? 'preview' : 'simulator',
       };
-      const hash = buildClaimHash(payload);
-      const link = `${location.origin}${location.pathname}${hash}`;
+      const link = buildClaimLink(location.origin, location.pathname, payload);
       const qr = await qrDataUrl(link);
-      setSent((s) => [{ id: toHex(receiptId), amount: BigInt(cents), link, qr }, ...s]);
+      setSent((s) => [{ id: toHex(receiptId), amount: BigInt(cents), link, qr, recipientSecret }, ...s]);
       confirmed('Transfer confirmed', 'Your transfer is sealed in escrow on Midnight Preview. Share the claim link with the recipient.', txHash);
       return `Receipt ${short(toHex(receiptId))} · claim link ready`;
     });
@@ -368,15 +369,16 @@ export default function App() {
               receiptId: (p as Sent).id,
               coin: { nonce: '', color: '', value: '' },
               salt: '',
-              recipientSecret: toHex(personas.recipient.recipientSecret!),
+              recipientSecret: toHex((p as Sent).recipientSecret),
               network: mode === 'preview' ? 'preview' : 'simulator',
             };
       if (!payload.coin.nonce) {
         const id = fromHex(payload.receiptId);
         const opening = backend.getEscrow?.(id);
         if (!opening) throw new Error('Open the claim link from the sender device, or use the QR.');
-        backend.withEscrow?.(personas.recipient, id, opening);
-        const r = await backend.claim(personas.recipient, id);
+        const own = { recipientSecret: fromHex(payload.recipientSecret) };
+        backend.withEscrow?.(own, id, opening);
+        const r = await backend.claim(own, id);
         confirmed('Claim confirmed', 'The escrowed funds were released to your wallet.', r.txHash);
         return `Claimed ${short(payload.receiptId)}`;
       }
@@ -393,6 +395,9 @@ export default function App() {
       const recipient = { recipientSecret: fromHex(payload.recipientSecret) };
       backend.withEscrow?.(recipient, id, opening);
       const r = await backend.claim(recipient, id);
+      // The link is a one-time bearer secret: take it out of the address bar and out of memory now.
+      clearClaimFromUrl();
+      setClaimPayload((cur) => (cur ? scrubPayload(cur) : cur));
       confirmed('Claim confirmed', 'The escrowed funds were released to your wallet.', r.txHash);
       return `Claimed ${short(payload.receiptId)}`;
     });
@@ -507,6 +512,7 @@ export default function App() {
                 ? 'Approve the connection in Lace if it asks.'
                 : conn.problem ? conn.problem.body : 'Connect Lace on the Preview network to send, claim and audit on the real contract.'}
             </p>
+            {(conn.problem?.problem === 'no-dust' || conn.problem?.problem === 'wallet-version') && <DustHelp kind={conn.problem.problem} />}
             <div className="conn-actions">
               <button type="button" className="btn primary" disabled={conn.status === 'connecting'} onClick={() => void connectPreview()}>
                 {conn.problem ? 'Try again' : 'Connect Lace'}
@@ -581,6 +587,7 @@ export default function App() {
                 <p className="fine">In the explorer, switch the network to Preview and search for this address.</p>
               </section>
             )}
+            <PrivacyExplorer />
             <ActivityList receipts={receipts} iso2={iso2of} limit={5} onViewAll={() => go('activity')} />
           </>
         )}
@@ -664,11 +671,7 @@ export default function App() {
               </div>
 
               {(sending || (mode === 'preview' && !!busy)) && (
-                <div className="proof-progress" role="status">
-                  <strong>{mode === 'preview' && stage === 'confirmed' ? 'Confirming on Midnight Preview' : 'Generating zero-knowledge proof'}</strong>
-                  <span>{mode === 'preview' ? 'This can take up to a minute. Lace may ask you to approve.' : 'Checking corridor policy and credential…'}</span>
-                  <div className="bar" aria-hidden><i /></div>
-                </div>
+                <ProofProgress stage={stage === 'confirmed' ? 'confirmed' : 'proving'} live={mode === 'preview'} label="Checking credential, corridor and limit" />
               )}
 
               <button
@@ -758,6 +761,7 @@ export default function App() {
                     <img className="qr" src={sent[0].qr} alt="Claim QR code" width={190} height={190} />
                     <p className="mono break fine">{sent[0].link}</p>
                     <button type="button" className="btn ghost" onClick={() => navigator.clipboard.writeText(sent[0].link)}>Copy link</button>
+                    <p className="fine warn-note">Anyone who opens this link can claim the transfer. Share it privately, and only once.</p>
                   </>
                 ) : (
                   <p className="muted">A QR code appears here after you send a transfer in this session.</p>

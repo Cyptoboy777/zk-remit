@@ -1,6 +1,23 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import wasm from 'vite-plugin-wasm';
+import { SECURITY_HEADERS, cspString } from './csp.mjs';
+
+/** Adds the CSP and referrer policy to the built index.html so every static host enforces them. */
+function securityMeta(): Plugin {
+  return {
+    name: 'security-meta',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'post',
+      handler: (html) =>
+        html.replace(
+          '<head>',
+          `<head>\n    <meta http-equiv="Content-Security-Policy" content="${cspString()}" />\n    <meta name="referrer" content="no-referrer" />`,
+        ),
+    },
+  };
+}
 
 /** Inlines the extracted CSS into index.html and drops the crossorigin attr on the
  *  stylesheet link. GitHub Pages serves the CSS correctly, but some browsers /
@@ -49,7 +66,9 @@ export default defineConfig({
     react(),
     wasm(),
     inlineCss(),
+    securityMeta(),
   ],
+  preview: { headers: SECURITY_HEADERS },
   optimizeDeps: {
     include: ['@midnight-ntwrk/compact-runtime'],
     exclude: ['@midnight-ntwrk/onchain-runtime-v3'],
