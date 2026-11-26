@@ -55,10 +55,16 @@ root.addEventListener(
 );
 
 EVENTS.forEach((e) => addEventListener(e, start, { capture: true, passive: true }));
-// A claim link starts the app too, but only once the static page has painted and the browser is idle,
-// so the first view stays fast on slow phones.
-if (location.hash.length > 1) {
-  const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
-  if (idle) idle(start, { timeout: 1500 });
-  else setTimeout(start, 600);
+// A claim link shows a small static landing first and starts the app on the first tap. The heavy
+// runtime (WebAssembly) therefore never blocks the first view on a slow phone, and nothing in the
+// link is read or sent anywhere until the person chooses to continue.
+if (/^#claim=/.test(location.hash)) {
+  const main = root.querySelector('.stage');
+  if (main) {
+    main.innerHTML =
+      '<section class="card claim-landing"><p class="eyebrow">Private claim</p>' +
+      '<h1 class="page-title">A transfer is waiting for you.</h1>' +
+      '<p class="lede">Your sender shared a one-time claim link. Open it to verify and claim. The link never leaves your device.</p>' +
+      '<button type="button" class="btn primary" data-boot-tab="claim">Open my claim</button></section>';
+  }
 }

@@ -61,6 +61,18 @@ await step('claim link keeps secrets in the fragment only', async () => {
   if (u.search !== '' || !u.hash.startsWith('#claim=')) throw new Error('secret outside fragment');
 });
 
+await step('claim link opens a light landing, then the claim view', async () => {
+  const h = (c) => c.repeat(64);
+  const payload = { v: 3, receiptId: h('a'), coin: { nonce: h('b'), color: h('c'), value: '42000' }, salt: h('d'), recipientSecret: h('e'), network: 'simulator' };
+  const b64 = Buffer.from(JSON.stringify(payload)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const p2 = await browser.newPage();
+  p2.on('pageerror', (e) => problems.push(`claim pageerror: ${e.message}`));
+  await p2.goto(`${base}/#claim=${b64}`, { waitUntil: 'load' });
+  await p2.waitForSelector('.claim-landing', { timeout: 10000 });
+  await p2.click('.claim-landing button');
+  await p2.waitForSelector('.claim-layout', { timeout: 90000 });
+});
+
 await browser.close();
 if (problems.length) {
   console.error('\nSmoke test problems:\n- ' + problems.join('\n- '));
