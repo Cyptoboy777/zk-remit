@@ -293,10 +293,14 @@ export default function App() {
     <div className="app">
       <a className="skip" href="#main">Skip to content</a>
       <header className="top">
-        <div className="brand" onClick={() => go('home')} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') go('home'); }}>
-          <span className="mark" aria-hidden>Z</span>
-          <strong>ZK Remit</strong>
-          <span className="pill demo" role="status">{t(locale, 'testnet_banner')}</span>
+        <div className="brand">
+          <button type="button" className="brand-home" onClick={() => go('home')} aria-label="ZK Remit home">
+            <img className="brand-logo" src="/brand/logo.svg" alt="" />
+          </button>
+          <span className="pill demo" role="status" aria-label={t(locale, 'testnet_banner')}>
+            <span className="demo-short" aria-hidden="true">Demo</span>
+            <span className="demo-full" aria-hidden="true">{t(locale, 'testnet_banner')}</span>
+          </span>
         </div>
         <div className="top-actions">
           <label className="lang">
@@ -332,7 +336,7 @@ export default function App() {
               <span className="notice-dot" aria-hidden="true" />
               <div>
                 <strong>Prototype mode</strong>
-                <p>This interactive demo runs the compiled contract in your browser. It does not connect to Midnight Preview or move real funds.</p>
+                <p>Runs locally—no live network or real funds.</p>
               </div>
               <button type="button" className="text-link" onClick={() => go('whatsnew')}>How it works</button>
             </section>
@@ -340,7 +344,7 @@ export default function App() {
               <div className="hero-copy">
                 <p className="eyebrow">Private by design · Global by nature</p>
                 <h1>
-                  <span className="h-mobile">Private by design</span>
+                  <span className="h-mobile">Move money. Keep it private.</span>
                   <span className="h-desk">Send value across borders. Prove compliance. Reveal nothing else.</span>
                 </h1>
                 <p className="lede lede-mobile">Send value across borders. Prove compliance. Reveal nothing else.</p>

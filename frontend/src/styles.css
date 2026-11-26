@@ -88,28 +88,26 @@ button { -webkit-tap-highlight-color: transparent; }
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  cursor: pointer;
   min-width: 0;
 }
-.mark {
+.brand-home {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 800;
-  font-size: 1.25rem;
-  letter-spacing: -0.04em;
   flex: 0 0 auto;
-  box-shadow: 0 8px 20px color-mix(in oklab, var(--accent) 28%, transparent);
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
 }
-.brand strong {
-  font-size: 1.15rem;
-  font-weight: 700;
-  letter-spacing: -0.03em;
+.brand-logo {
+  display: block;
+  width: 142px;
+  height: auto;
 }
+.demo-short { display: none; }
+.demo-full { display: inline; }
+.brand-home:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .top-actions { display: flex; gap: 0.5rem; align-items: center; }
 .lang select {
   background: transparent;
@@ -843,6 +841,25 @@ button { -webkit-tap-highlight-color: transparent; }
   .seal-corridor { margin-bottom: 0.65rem; font-size: 1.25rem; }
   .hero-cta { margin: 1rem 0 1.05rem; }
   .home-hero { gap: 1rem; padding-top: 0.6rem; }
+  .hero-copy > .lede:not(.lede-mobile) { display: none; }
+}
+@media (max-width: 380px) {
+  .top { gap: 0.35rem; }
+  .brand { gap: 0.4rem; }
+  .brand-logo { width: clamp(104px, calc(100vw - 178px), 126px); }
+  .pill.demo { max-width: 4.55rem; margin-left: 0; padding: 0.16rem 0.28rem; font-size: 0.56rem; line-height: 1.15; }
+  .demo-short { display: inline; }
+  .demo-full { display: none; }
+  .top-actions { gap: 0.15rem; }
+  .lang select { padding-right: 1rem; }
+  .notice-banner { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.55rem 0.65rem; }
+  .notice-banner > div { flex: 1; }
+  .notice-banner p { font-size: 0.72rem; line-height: 1.25; }
+  .notice-banner .text-link { align-self: flex-start; font-size: 0.68rem; }
+  .home-hero { gap: 0.55rem; padding-top: 0.25rem; }
+  .hero-copy h1 { margin-bottom: 0.5rem; }
+  .lede-mobile { margin-bottom: 0.2rem; }
+  .hero-cta { margin: 0.2rem 0 0.35rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
