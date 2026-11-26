@@ -71,3 +71,23 @@ jobs:
           path: frontend/lighthouse
           if-no-files-found: ignore
           retention-days: 14
+
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install compactc 0.36.1
+        run: |
+          ./scripts/install-compactc.sh 0.36.1
+          echo "$HOME/.local/compactc-0.36.1" >> "$GITHUB_PATH"
+      - run: npm ci
+      - name: Delete each contract guard and require a test to fail
+        run: node scripts/mutation.mjs
+      - name: Confirm the deployment through the public indexer
+        if: always()
+        continue-on-error: true
+        run: node scripts/verify-deployment.mjs
