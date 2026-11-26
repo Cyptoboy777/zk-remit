@@ -24,6 +24,20 @@ the corridor’s claim window.
 - **Privacy Simulator:** original in-app tour — shielded vs disclosed language, proof-bloom moment, cinematic camera, 60fps quality tiers, reduced-motion / WebGL 2D fallback, **EN/ES/PT/ZH/FR** (model-driven; not a teardown clone)
 - **Baseline tag:** `wave2-baseline`
 
+## What judges ask for, and where to see it
+
+| Judge ask | Where it is in the app | Proof in the repo |
+| --- | --- | --- |
+| Real on-chain use of the deployed contract (send, claim, reclaim, receipt proof) with Lace on Preview | Connect Lace, then Send, Claim and Auditor tabs. The Home tab shows the contract address. | Address and transaction hashes in [`frontend/src/deployment.json`](frontend/src/deployment.json); `contract/src/zk-remit.compact` |
+| Clear "what is public, what stays private" for every action | Home tab, **Who sees what** (pick Send, Claim, Reclaim, Audit and drag an amount); Send tab, **What the ledger sees** | [`privacyMatrix.ts`](frontend/src/lib/privacyMatrix.ts) plus its test; the table in this README |
+| Selective disclosure: a regulator checks compliance without amounts or identities | Auditor tab: prove ownership of one receipt to one challenge | `proveReceiptOwnership` and test S6 |
+| Secrets stay local and are never logged or sent | Nothing to configure. Secrets are sealed on the device. | [`secureStore.ts`](frontend/src/lib/secureStore.ts), tests, [SECURITY.md](SECURITY.md) F1, F4, F5 |
+| Real-world story and business model | Home tab corridors, the [Who pays](#who-pays-business-model) section | Below |
+| Tests for every circuit and edge case, CI green | CI badge on the repo | 36 contract tests and 46 frontend tests, plus a browser smoke test and Lighthouse run in CI |
+| Demo video script and deck that match the live app | n/a | [`docs/VIDEO_SCRIPT.md`](docs/VIDEO_SCRIPT.md), [`docs/DECK_AND_VIDEO_OUTLINE.md`](docs/DECK_AND_VIDEO_OUTLINE.md) |
+
+Security review with threat model, findings and fixes: [SECURITY.md](SECURITY.md). Criteria-based comparison with what judges tend to reward: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+
 ## Wave 3 changelog
 
 | Metric | `wave2-baseline` | Wave 3 |
@@ -65,7 +79,7 @@ Midnight runs two ledgers side by side, and ZK Remit uses both on purpose.
 | `holderSecret` | sender's secret key | `holderPublicKey` must equal `credential.holderPk`; derives the nullifier and view key |
 | `heldCredential` | tier, country, issuer, expiry, salt | `persistentHash` leaf proven in `credentials` via `credentialPath` |
 | `issuerPath` / `credentialPath` | Merkle paths | `merkleTreePathRoot` checked against the historic roots |
-| `recipientSecret` | recipient's claim secret (travels in the claim link) | `recipientTagOf(secret)` must equal the receipt's `recipientTag` |
+| `recipientSecret` | recipient's claim secret (a fresh one per transfer, travels only in that transfer's claim link fragment) | `recipientTagOf(secret)` must equal the receipt's `recipientTag` |
 | `escrowSalt` / `escrowOpening` | coin opening + salt, including the coin's real tree index | `persistentCommit` must equal the receipt's `escrowCommit` |
 | `governorSecret` / `issuerSecret` | operator keys | hashed and compared with `governorPk` / issuer tree |
 
@@ -157,7 +171,8 @@ Filled in by `npm run deploy:fill-docs` after the operator deploy (see [`docs/DE
 - [x] Compact compiles (0.36.1, ledger 9) with witnesses + commitments
 - [x] Simulator tests assert ledger state (contract) + deployment loading / backend selection / friendly-error tests (frontend)
 - [x] Frontend calls circuits and reads ledger snapshot
-- [ ] Deployed Preview address in README (`npm run deploy:preview:all` fills it in)
+- [x] Deployed Preview address in README (see Deployment above)
+- [x] Security review ([SECURITY.md](SECURITY.md)) with a test per finding
 - [x] Privacy table (above) + in-app disclosure preview
 - [x] Apache-2.0 license, public repo, topic `midnightntwrk`
 

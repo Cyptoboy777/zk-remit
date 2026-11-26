@@ -30,7 +30,11 @@ The frontend connects Lace through the DApp Connector, lets Lace generate the pr
 
 When Midnight relaunched Preview on ledger 9 in November, we moved the whole project to the new stack: Compact 0.36.1, Midnight.js 5 and Wallet SDK 2. Deploying is one command that checks Docker, the proof server, the compiler and the wallet's tDUST before it spends anything.
 
-There are 26 contract tests on the Compact runtime and 25 frontend tests, all passing in CI, which also compiles the contract with compactc 0.36.1 on every push.
+There are 36 contract tests on the Compact runtime and 46 frontend tests, all passing in CI, which also compiles the contract with compactc 0.36.1 on every push, runs a real browser against the production build and records Lighthouse scores.
+
+## Privacy and security work this week
+
+We wrote down, for every action, what the public ledger learns and what stays sealed, and put it in the app as an interactive panel anyone can try. We then reviewed our own contract, app and scripts and wrote up the findings in SECURITY.md with a test for each. The app now seals its local secrets with a device key, gives every transfer its own recipient key so two transfers to the same person cannot be linked, keeps the claim secret in the link's fragment and clears it after use, and ships a strict content security policy. Two contract limits need a redeploy to fix, and we list them plainly instead of hiding them: revoking an issuer does not cancel credentials it already issued, and the governor can lengthen a corridor's claim window for escrows already pending.
 
 ## Deployment
 
