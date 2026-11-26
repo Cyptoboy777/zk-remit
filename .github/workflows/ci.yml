@@ -51,13 +51,14 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
       - name: Browser smoke test under the shipped CSP
         if: matrix.compactc == '0.36.1'
-        working-directory: frontend
         run: |
-          npm install --no-save --no-package-lock playwright@1.49.1
+          mkdir /tmp/pw && cp frontend/ci/smoke.mjs /tmp/pw/ && cd /tmp/pw
+          npm init -y >/dev/null && npm install playwright@1.49.1
           npx playwright install --with-deps chromium
+          cd "$GITHUB_WORKSPACE/frontend"
           (npm run preview -- --port 4173 --strictPort > /tmp/preview.log 2>&1 &)
           npx -y wait-on@8 http://localhost:4173 --timeout 60000
-          node ci/smoke.mjs http://localhost:4173
+          cd /tmp/pw && node smoke.mjs http://localhost:4173
       - name: Lighthouse (home and claim link)
         if: matrix.compactc == '0.36.1'
         working-directory: frontend
