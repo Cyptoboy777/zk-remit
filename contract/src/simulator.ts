@@ -198,11 +198,13 @@ export const makeCredential = (
   tier: bigint,
   country: bigint,
   expiryEpoch: bigint,
+  generation = 1n,
 ): Credential => ({
   holderPk: pureCircuits.holderPublicKey(holderSecret),
   issuerPk,
   tier,
   country,
   expiryEpoch,
+  generation,
   salt: randomBytes(),
 });

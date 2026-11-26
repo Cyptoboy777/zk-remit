@@ -1,15 +1,14 @@
 # ZK Remit — 60-second demo script
 
-**Setup:** open https://cyptoboy777.github.io/zk-remit/ (fresh tab, Simulator mode). Screen 1400×900. Optional: Lace connected for the last beat.
+**Setup:** open the hosted site and confirm the persistent **Interactive simulator · no live transactions** badge. This walkthrough demonstrates the local compiled-contract simulator only; it is not a Midnight Preview deployment. Use a desktop browser wide enough to show the public/private comparison.
 
 | Time | Screen | Voice-over |
 |---|---|---|
-| 0:00–0:07 | Hero + three stat tiles | "This is ZK Remit. Aisha is a nurse in Dubai sending money to her family in Kerala. Today every transfer copies her passport into four databases." |
-| 0:07–0:17 | ① KYC Attestor → **Issue credential**, **Open corridor 🇦🇪→🇮🇳** | "A licensed exchange house verifies her once — and publishes only a hash into a Merkle tree on Midnight. Left: their private vault. Right: all the chain sees." |
-| 0:17–0:32 | ② Sender → $420 → checklist all green → **Prove & send**; point to Public ledger | "Aisha's device proves six things in one Compact circuit: issued, hers, unexpired, licensed corridor, under her tier cap, quota left. The public ledger gets a corridor, an amount band and a nullifier. No name, no amount, no link between her transfers." |
-| 0:32–0:40 | ③ Recipient → **Prove & claim**, then click again → "already claimed" | "Her brother claims with his own secret key — exactly once." |
-| 0:40–0:50 | ⚔ Attack lab → click Forged, Stolen, Over-limit, Replay | "Forged credential, stolen credential, over the limit, replaying a quota slot — each one is rejected inside the circuit." |
-| 0:50–0:57 | ④ Auditor → Mode A prove ownership; Mode B **Use Aisha's view key** → "Matched 2" | "And when a regulator legitimately asks, Aisha discloses on her terms: one receipt, or a read-only view key." |
-| 0:57–1:00 | Header (Midnight network / Lace) | "ZK Remit: compliance without surveillance — built on Midnight." |
+| 0:00–0:08 | Home hero + prototype notice | "ZK Remit explores how a remittance app can prove compliance without publishing a sender's identity or exact transfer amount. This is a browser simulator, not a live payment network." |
+| 0:08–0:18 | **Start a demo transfer** → sender form, $420, UAE → Philippines | "The demo seeds a local issuer, opens a test corridor, and issues a sample credential. Nothing is sent to a chain." |
+| 0:18–0:32 | Sender view → **Send privately**; point to public ledger panel | "The compiled Compact contract checks credential membership, holder binding, expiry, corridor policy, tier cap and quota. The simulated ledger records a corridor, amount band and blinded receipt data—not the exact amount or credential." |
+| 0:32–0:42 | **Claim** → open transfer | "The intended recipient claims the simulated escrow once. The QR link contains bearer secrets, so treat it like cash and share it only with the recipient." |
+| 0:42–0:52 | **Auditor** → preview view-key receipts; create receipt proof | "The sender can preview which receipts match a view key or record a challenge-bound ownership proof in this simulator. This is not an external auditor verification service." |
+| 0:52–1:00 | **Privacy Simulator** → compare public and private data | "ZK Remit is a prototype for selective disclosure on Midnight. Live wallet calls and Preview settlement are not yet connected." |
 
-**Recording tips:** zoom browser to 110%; pre-type nothing (defaults are demo-ready); keep the right column visible so the public-vs-private contrast is always on screen.
+**Recording tips:** keep the simulator badge visible, show the public-versus-private panel, and never imply that the demo moved real funds or generated a live-chain transaction.
