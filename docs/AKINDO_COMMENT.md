@@ -4,7 +4,7 @@ Every number below comes from the repository and its CI run. Nothing is estimate
 
 ZK Remit: private cross-border remittance on Midnight. A sender proves they hold a valid KYC credential and stay inside a corridor limit, locks the funds in a shielded escrow, and the recipient claims with a one-time link. The public ledger learns a corridor and an amount band, nothing else. A regulator can verify compliance for one receipt without seeing identities or amounts.
 
-What changed since Wave 2: the contract is deployed and used on Midnight Preview (ledger 9), claim and reclaim spend a real shielded escrow, a Preview-only test-funds mint lets any wallet try it, the app has a Preview mode with Lace, and we ran a security review and a mutation check on our own contract. Details in the README changelog and SECURITY.md.
+What changed since Wave 2: the contract is deployed and used on Midnight Preview (ledger 9), claim and reclaim are written to spend a real shielded escrow (add your Preview send and claim transaction hashes here once you have run them), a Preview-only test-funds mint lets any wallet try it, the app has a Preview mode with Lace, and we ran a security review and a mutation check on our own contract. Details in the README changelog and SECURITY.md.
 
 1. Engineering and Implementation (40%)
 - One Compact contract (compactc 0.36.1) with 34 guards across issuer, sender, claim, reclaim, audit and governor circuits. Witness-held private state, Merkle membership for credentials and issuers, per-epoch nullifiers, shielded escrow with receiveShielded and sendShielded, blinded view tags for selective disclosure. The README explains the dual-ledger split and has an architecture diagram.
