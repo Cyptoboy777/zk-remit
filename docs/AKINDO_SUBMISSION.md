@@ -1,6 +1,6 @@
 # AKINDO submission draft (Midnight Wave 3)
 
-Note: ZK Remit has no AKINDO product page yet. It has to be created and submitted before Nov 30, 20:30 IST. The Deployment block is filled in by npm run deploy:fill-docs after the Preview deploy; fill the remaining bracketed links by hand. Plain text below, no markdown formatting, ready to paste.
+Note: create the AKINDO product page and submit before Nov 30, 20:30 IST. Only the two bracketed links at the bottom are left to fill by hand. Plain text below, ready to paste.
 
 ## Product name
 
@@ -17,6 +17,10 @@ Millions of people send part of every paycheck home. Each transfer leaves a trai
 A licensed KYC issuer gives the sender a credential, and only a commitment to it goes on chain. When the sender pays, their device proves in zero knowledge that the credential is valid and unexpired, that the corridor is open, that the amount is under their tier's limit and that they have not used up this period's quota. The ledger only learns the corridor, an amount band, a one-time nullifier and two blinded tags. The money itself moves as a shielded token into escrow inside the contract.
 
 The recipient gets a claim link or QR code. Opening it walks them through three plain steps, and they claim with a proof that they hold the link. If nobody claims within the corridor's window, the sender can take the money back. When an auditor needs to check a transfer, the sender can prove that a specific receipt is theirs, and nothing else.
+
+## What changed since Wave 2
+
+Wave 2 produced compliance receipts only: 7 circuits, one issuer that was also the admin, corridors that were open or closed, and no money movement. Wave 3 adds shielded escrow, 12 circuits, on-chain corridor policies, multiple revocable issuers, claim links with a fresh secret per transfer, a security review, and a deployment on Preview. The baseline is the wave2-baseline tag in the repo.
 
 ## What we built in Wave 3
 
@@ -46,6 +50,12 @@ Seed transactions recorded: 9
 <!-- deployment:end -->
 Live app: https://cyptoboy777.github.io/zk-remit/
 
+## How judges can test it
+
+No wallet: run npm install and npm test (46 contract and 46 frontend tests), then node scripts/verify-deployment.mjs to find our contract on the public Preview indexer. Open the live app in Simulator mode to run a full send and claim in the browser.
+
+With Lace on Preview: switch the app to Midnight Preview, connect, press Get test funds, send, then open the claim link in a second wallet. If Generate tDUST fails in Lace 2.5.2, npm run dust:register is the workaround.
+
 ## Who pays
 
 Licensed remittance operators, not senders. They would pay a small per-transfer fee for compliant private settlement and a per-credential fee when their KYC desk issues a reusable attestation. They already pay for KYC and monitoring. This keeps customer data off chain while the rules are still provable. We do not have partners or users yet. The next step is one operator on one corridor in a sandbox.
@@ -57,5 +67,5 @@ Walletless claiming for recipients through a sponsored claim, a partner sandbox 
 ## Links
 
 Repo: https://github.com/Cyptoboy777/zk-remit
-Demo video: [link]
-Deck: [link]
+Demo video: [paste the video URL here before submitting]
+Deck: [paste the deck URL here before submitting]
