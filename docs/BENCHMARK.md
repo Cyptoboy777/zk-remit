@@ -13,6 +13,6 @@ Honest scope note. This is a criteria-based comparison, not a teardown of named 
 | UX | Clear flow, friendly errors, mobile ready | Guided send and claim, proof progress with elapsed time, plain errors, wallet help for the tDUST problem | Improved in this pass |
 | Business case | Who pays and why ZK beats the status quo | Operators pay per transfer and per credential; no customer data off chain | Present. Stated honestly: no users or revenue yet |
 | Docs and demo | README, video, deck that match the live app | README judge table, submission text, 60 to 90 second script | Updated in this pass |
-| Verification | Tests and CI | 36 contract tests, 46 frontend tests, real-browser smoke test under the CSP, Lighthouse scores in CI | Added the browser and Lighthouse jobs |
+| Verification | Tests and CI | 46 contract tests, 46 frontend tests, a mutation check that deletes each of the contract's guards (33 of 33 reachable ones caught), a real-browser smoke test under the CSP, Lighthouse scores in CI | Added the browser and Lighthouse jobs |
 
 The most valuable remaining gaps are the two redeploy items (C1 revocation at send, C2 claim window snapshot) and a recorded demo video.

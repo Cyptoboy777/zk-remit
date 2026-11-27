@@ -24,6 +24,39 @@ the corridor’s claim window.
 - **Privacy Simulator:** original in-app tour — shielded vs disclosed language, proof-bloom moment, cinematic camera, 60fps quality tiers, reduced-motion / WebGL 2D fallback, **EN/ES/PT/ZH/FR** (model-driven; not a teardown clone)
 - **Baseline tag:** `wave2-baseline`
 
+## Check it in five minutes
+
+```bash
+npm install
+npm test                          # 46 contract tests + 46 frontend tests, no network or wallet
+npm run dev -w frontend           # Simulator mode: the same compiled circuits, running in your browser
+node scripts/verify-deployment.mjs   # asks the public Preview indexer for our contract (no wallet needed)
+node scripts/mutation.mjs         # deletes each of the 34 contract guards and requires a test to fail (needs compactc)
+```
+
+On Midnight Preview: open the app, switch to **Midnight Preview**, connect Lace, press **Get test funds**, then Send. Contract address and deploy transaction are in [Deployment](#deployment-midnight-preview).
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Device["Your device (private state)"]
+    W[Witnesses: holder secret, credential, escrow opening]
+    UI[React app + Lace connector]
+  end
+  subgraph Chain["Midnight Preview"]
+    L[Public ledger: credential tree, nullifiers, receipts, corridor policy]
+    Z[Zswap shielded ledger: escrowed coin]
+  end
+  UI -->|proof request| PS[Local proof server]
+  W --> PS
+  PS -->|zero-knowledge proof| UI
+  UI -->|proven transaction via Lace| L
+  L --- Z
+```
+
+Midnight's dual ledger is used on purpose. Eligibility, quota and status live in public contract state as hashes and counters. The money itself never appears there: it sits in a shielded coin the contract holds, and is released with `sendShielded` to the claimer's wallet. Private state (secrets, credential, escrow opening) stays on the device and is sealed at rest.
+
 ## What judges ask for, and where to see it
 
 | Judge ask | Where it is in the app | Proof in the repo |
@@ -33,7 +66,7 @@ the corridor’s claim window.
 | Selective disclosure: a regulator checks compliance without amounts or identities | Auditor tab: prove ownership of one receipt to one challenge | `proveReceiptOwnership` and test S6 |
 | Secrets stay local and are never logged or sent | Nothing to configure. Secrets are sealed on the device. | [`secureStore.ts`](frontend/src/lib/secureStore.ts), tests, [SECURITY.md](SECURITY.md) F1, F4, F5 |
 | Real-world story and business model | Home tab corridors, the [Who pays](#who-pays-business-model) section | Below |
-| Tests for every circuit and edge case, CI green | CI badge on the repo | 36 contract tests and 46 frontend tests, plus a browser smoke test and Lighthouse run in CI |
+| Tests for every circuit and edge case, CI green | CI badge on the repo | 46 contract tests and 46 frontend tests, a guard mutation check (33 of 33 reachable guards caught), a browser smoke test under the CSP and a Lighthouse run in CI |
 | Demo video script and deck that match the live app | n/a | [`docs/VIDEO_SCRIPT.md`](docs/VIDEO_SCRIPT.md), [`docs/DECK_AND_VIDEO_OUTLINE.md`](docs/DECK_AND_VIDEO_OUTLINE.md) |
 
 Security review with threat model, findings and fixes: [SECURITY.md](SECURITY.md). Criteria-based comparison with what judges tend to reward: [docs/BENCHMARK.md](docs/BENCHMARK.md).

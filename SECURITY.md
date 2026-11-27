@@ -60,8 +60,12 @@ An observer can see that a transaction reached the contract, its timing, and the
 ## Verifying this yourself
 
 ```bash
-npm test                      # contract (S1-S10 and lifecycle) and frontend tests
+npm test                      # contract (S1-S10, forged-witness and lifecycle) and frontend tests
 npm run build -w frontend     # typecheck + production build
+node scripts/mutation.mjs     # delete each contract guard, recompile, require a test to fail
+node scripts/verify-deployment.mjs   # ask the public indexer for the deployed contract
 ```
+
+The mutation check found 12 untested guards on its first run (all guards that only a dishonest client could reach, such as a forged Merkle path). We wrote a test for each. It now reports 33 of 33 reachable guards caught; the one remaining guard (`reclaim` re-checking the corridor exists) cannot be reached because no circuit deletes a corridor, and is documented in `contract/mutation-allowlist.json`.
 
 CI also runs a real Chromium against the production build under the shipped CSP (no violations allowed) and records Lighthouse scores.

@@ -30,7 +30,7 @@ The frontend connects Lace through the DApp Connector, lets Lace generate the pr
 
 When Midnight relaunched Preview on ledger 9 in November, we moved the whole project to the new stack: Compact 0.36.1, Midnight.js 5 and Wallet SDK 2. Deploying is one command that checks Docker, the proof server, the compiler and the wallet's tDUST before it spends anything.
 
-There are 36 contract tests on the Compact runtime and 46 frontend tests, all passing in CI, which also compiles the contract with compactc 0.36.1 on every push, runs a real browser against the production build and records Lighthouse scores.
+There are 46 contract tests on the Compact runtime and 46 frontend tests, all passing in CI, which also compiles the contract with compactc 0.36.1 on every push, runs a real browser against the production build and records Lighthouse scores.
 
 ## Privacy and security work this week
 
