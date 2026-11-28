@@ -25,6 +25,17 @@
   <img alt="Mutation" src="https://img.shields.io/badge/guards%20caught-33%2F33-2ea44f" />
 </p>
 
+## Judge quick-verify
+
+| What | Link |
+| --- | --- |
+| Live app | https://cyptoboy777.github.io/zk-remit/ |
+| Contract on Preview | `0baf0281028181bf6d53c9f1ff37109252202244fe861cea2d90e132ee8615d3` · [explorer](https://preview.midnightexplorer.com) (search the address) |
+| On-chain proof and indexer output | [PROOF.md](PROOF.md) |
+| Quality and engineering results | [docs/WAVE3-RESULTS.md](docs/WAVE3-RESULTS.md) |
+| Slide deck (PDF) | [docs/ZK-Remit-slides.pdf](docs/ZK-Remit-slides.pdf) |
+| Explainer video | [docs/zk-remit-explainer.mp4](docs/zk-remit-explainer.mp4) |
+
 ---
 
 ## The problem
@@ -185,7 +196,15 @@ Compared with the `wave2-baseline` tag.
 | Networks | Simulator | Simulator and **Midnight Preview** with Lace, plus a CLI path for tDUST |
 | Languages | English | EN, ES, PT, ZH, FR |
 
-## Who pays
+## Product and business viability
+
+**Who it is for.** Cross-border freelancers who want to be paid abroad without exposing income and identity to every intermediary; SMEs paying overseas suppliers or contractors who must show limits and licence terms without sharing their books; and licensed remittance operators on corridors such as UAE to Philippines, USA to Mexico, Saudi Arabia to Pakistan and UK to Nigeria. The World Bank's Remittance Prices Worldwide puts the average cost of sending money at 6.36 percent of the amount sent, so the market already pays for this service.
+
+**Why selective auditor disclosure makes it commercially viable.** A payment operator cannot adopt a privacy product that its regulator cannot inspect. ZK Remit's sender can prove to an auditor that one specific receipt is theirs, bound to that auditor's challenge, and reveal nothing else. Corridor limits, per-tier caps and claim windows are enforced by the contract, and licensed issuers attest customers once. That lets an operator show compliance without keeping a customer database that can leak, which is what a compliance review asks for.
+
+**Who pays.** Operators, through a small per-transfer fee and a per-credential fee. Status: no partners, users or revenue yet and no measured fee; the next step is one operator on one corridor in a sandbox.
+
+## Who pays (detail)
 
 ZK Remit is infrastructure for licensed remittance operators (money transfer operators, e-money issuers, remittance fintechs) on corridors such as UAE to Philippines, USA to Mexico, Saudi Arabia to Pakistan and UK to Nigeria.
 

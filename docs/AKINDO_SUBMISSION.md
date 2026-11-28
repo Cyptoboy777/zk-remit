@@ -2,6 +2,16 @@
 
 Note: create the AKINDO product page and submit before Nov 30, 20:30 IST. Only the two bracketed links at the bottom are left to fill by hand. Plain text below, ready to paste.
 
+## Judge quick-verify
+
+Live app: https://cyptoboy777.github.io/zk-remit/
+Contract on Preview: 0baf0281028181bf6d53c9f1ff37109252202244fe861cea2d90e132ee8615d3 (explorer: https://preview.midnightexplorer.com, search the address)
+On-chain proof: PROOF.md in the repo
+Results: docs/WAVE3-RESULTS.md
+Slide deck: docs/ZK-Remit-slides.pdf
+Explainer video: docs/zk-remit-explainer.mp4
+Repo: https://github.com/Cyptoboy777/zk-remit
+
 ## Product name
 
 ZK Remit
@@ -55,6 +65,10 @@ Live app: https://cyptoboy777.github.io/zk-remit/
 No wallet: run npm install and npm test (46 contract and 46 frontend tests), then node scripts/verify-deployment.mjs to find our contract on the public Preview indexer. Open the live app in Simulator mode to run a full send and claim in the browser.
 
 With Lace on Preview: switch the app to Midnight Preview, connect, press Get test funds, send, then open the claim link in a second wallet. If Generate tDUST fails in Lace 2.5.2, npm run dust:register is the workaround.
+
+## Who it is for and why it is viable
+
+Cross-border freelancers, SMEs paying overseas, and licensed remittance operators on corridors such as UAE to Philippines, USA to Mexico, Saudi Arabia to Pakistan and UK to Nigeria. The World Bank's Remittance Prices Worldwide puts the average cost of sending money at 6.36 percent of the amount sent. A payment operator cannot adopt a privacy product its regulator cannot inspect, so the sender can prove to an auditor that one receipt is theirs, bound to the auditor's challenge, and reveal nothing else. Corridor limits and caps are enforced by the contract and licensed issuers attest customers once, so an operator can show compliance without a customer database that can leak.
 
 ## Who pays
 

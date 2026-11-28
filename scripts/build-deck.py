@@ -1,0 +1,36 @@
+"""Builds docs/ZK-Remit-slides.pdf from facts in the repo. Needs Python + Playwright + Chromium.
+Usage: python3 scripts/build-deck.py"""
+import json, pathlib
+from playwright.sync_api import sync_playwright
+root = pathlib.Path(__file__).resolve().parent.parent
+d = json.loads((root / 'frontend/src/deployment.json').read_text())
+logo = (root / 'frontend/public/brand/logo.svg').read_text()
+A, T = d['contractAddress'], d['deployTxHash']
+CSS = """@page{size:1280px 720px;margin:0}*{box-sizing:border-box;margin:0}
+body{font-family:'Helvetica Neue',Arial,sans-serif;color:#f3efe2}
+.sl{width:1280px;height:720px;padding:64px 84px;display:flex;flex-direction:column;justify-content:center;background:radial-gradient(ellipse at 30% 15%,#14295a,#07122b 70%);page-break-after:always;position:relative;overflow:hidden}
+.sl:after{content:attr(data-n);position:absolute;right:40px;bottom:26px;color:#6f7fa8;font-size:16px}
+h1{font-size:66px;line-height:1.08}h2{font-size:44px;line-height:1.15;margin-bottom:28px}.g{color:#d4af37}.s{font-size:26px;color:#b9c2d8;margin-top:18px;line-height:1.4}
+.k{font-size:15px;letter-spacing:.2em;color:#d4af37;text-transform:uppercase;margin-bottom:16px}
+.row{display:flex;gap:18px}.box{flex:1;border:2px solid #d4af37;border-radius:16px;padding:22px;font-size:23px;background:#0c1d44;line-height:1.35}.box b{display:block;color:#d4af37;font-size:14px;letter-spacing:.15em;margin-bottom:8px}
+.ar{align-self:center;color:#d4af37;font-size:34px}table{border-collapse:collapse;font-size:24px;width:100%}td,th{padding:12px 18px;border-bottom:1px solid #2a3c6b;text-align:left}th{color:#d4af37;font-size:15px;letter-spacing:.15em}
+.big{font-size:130px;font-weight:700;color:#d4af37;line-height:1}.mono{font-family:monospace;font-size:21px;word-break:break-all;background:#0c1d44;padding:12px 16px;border-radius:10px;margin:6px 0 14px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.grid>div{border:2px solid #2a3c6b;border-radius:14px;padding:18px}.grid .n{font-size:46px;font-weight:700;color:#d4af37}.grid span{font-size:18px;color:#b9c2d8}
+.fn{font-size:16px;color:#8a97ba;margin-top:22px}ul{padding-left:0}li{list-style:none;font-size:25px;margin:9px 0;line-height:1.35}li:before{content:'› ';color:#d4af37}"""
+S = [
+ f"<div style='width:280px;margin-bottom:28px'>{logo}</div><h1>Prove you are compliant.<br><span class=g>Reveal nothing else.</span></h1><p class=s>Private cross-border remittances on Midnight · Buildathon Wave 3</p>",
+ "<div class=k>The problem</div><div class=row style='align-items:center;gap:50px'><div><div class=big>6.36%</div><p class=s style='margin-top:6px'>average cost of sending money, as a share of the amount sent</p></div><div><ul><li>Fees take a real cut of money people send home</li><li>Every transfer copies name, ID and amount through several companies</li><li>Each copy is a breach risk, and compliance today means exposure</li></ul></div></div><p class=fn>Source: World Bank, Remittance Prices Worldwide (remittanceprices.worldbank.org). We do not claim a measured ZK Remit fee; none exists yet.</p>",
+ "<div class=k>How it works</div><h2>Four steps, one private trail</h2><div class=row><div class=box><b>1 · ISSUER</b>Vouches once. Only a commitment goes on chain.</div><div class=ar>›</div><div class=box><b>2 · PROOF</b>The sender's device proves limits and corridor in zero knowledge.</div><div class=ar>›</div><div class=box><b>3 · ESCROW</b>Shielded coin held by the contract.</div><div class=ar>›</div><div class=box><b>4 · CLAIM</b>Recipient opens a one-time link or QR. No claim in time: sender reclaims.</div></div>",
+ "<div class=k>Public versus sealed</div><h2>What the ledger learns</h2><table><tr><th>PUBLIC</th><th>SEALED</th></tr><tr><td>Corridor (from, to)</td><td>Name and identity</td></tr><tr><td>Amount band</td><td>Exact amount</td></tr><tr><td>One-time nullifier, blinded tags</td><td>KYC tier and issuer</td></tr><tr><td>Pending, claimed or refunded</td><td>Who the recipient is</td></tr></table><p class=fn>Exact amounts are not in contract state; the coin's value lives only in the shielded ledger.</p>",
+ "<div class=k>Under the hood</div><h2>Midnight's dual ledger, used on purpose</h2><div class=row><div class=box><b>PUBLIC CONTRACT STATE</b>Merkle roots, nullifiers, receipts, corridor policy, counters</div><div class=box><b>ZSWAP SHIELDED LEDGER</b>The money: receiveShielded in, sendShielded out</div><div class=box><b>DEVICE (WITNESSES)</b>Holder secret, credential, escrow opening; sealed with AES-GCM</div></div><p class=s>12 Compact circuits · Merkle membership · per-epoch nullifiers · persistentCommit escrow · real coin tree index from the indexer</p>",
+ "<div class=k>Institutional fit</div><h2>Selective auditor proof and corridor policy</h2><ul><li><b class=g>Selective disclosure:</b> the sender proves one receipt is theirs to one auditor challenge, and nothing else</li><li><b class=g>Corridor policy on chain:</b> per-tier caps, slots per epoch, max amount band, claim window, per corridor</li><li><b class=g>Multi-issuer, revocable:</b> licensed KYC desks attest; operators set the rules, the contract enforces them</li><li>Regulators get checkable compliance without a database of customers</li></ul>",
+ f"<div class=k>Live on Midnight Preview</div><h2>Deployed and independently verifiable</h2><div style='font-size:17px;color:#b9c2d8'>Contract</div><div class=mono>{A}</div><div style='font-size:17px;color:#b9c2d8'>Deploy transaction</div><div class=mono>{T}</div><div class=grid><div><div class=n>FOUND</div><span>public indexer returns the contract (CI)</span></div><div><div class=n>46+46</div><span>contract and frontend tests</span></div><div><div class=n>33/33</div><span>contract guards caught by mutation check</span></div><div><div class=n>96–100</div><span>Lighthouse (mobile)</span></div></div>",
+ "<div class=k>Who it is for</div><h2>Go to market</h2><table><tr><th>USER</th><th>WHY THEY CARE</th></tr><tr><td>Cross-border freelancers</td><td>Get paid abroad without exposing income and identity to every intermediary</td></tr><tr><td>SMEs paying overseas</td><td>Prove limits and licence terms to a counterparty without sharing books</td></tr><tr><td>Remittance operators</td><td>Prove compliance on chain, keep customer data off it, reuse credentials</td></tr></table><p class=s>First corridors: UAE→Philippines, USA→Mexico, Saudi Arabia→Pakistan, UK→Nigeria. Operators pay a small per-transfer and per-credential fee. Status: no partners, users or revenue yet; next step is one operator, one corridor, in a sandbox.</p>",
+ f"<div style='width:240px;margin-bottom:24px'>{logo}</div><h1>ZK Remit, <span class=g>on Midnight</span></h1><p class=s>Next: walletless claim · one-operator sandbox · mainnet when available<br>github.com/Cyptoboy777/zk-remit · cyptoboy777.github.io/zk-remit<br>Apache-2.0</p>",
+]
+html = f"<html><head><meta charset=utf-8><style>{CSS}</style></head><body>" + "".join(f"<div class=sl data-n='{i+1}'>{s}</div>" for i, s in enumerate(S)) + "</body></html>"
+with sync_playwright() as p:
+    b = p.chromium.launch(); pg = b.new_page(viewport={'width':1280,'height':720})
+    pg.set_content(html); pg.pdf(path=str(root / 'docs/ZK-Remit-slides.pdf'), width='1280px', height='720px', print_background=True)
+    b.close()
+print('wrote docs/ZK-Remit-slides.pdf')
