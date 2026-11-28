@@ -24,6 +24,7 @@ ap.add_argument('--base', default='https://cyptoboy777.github.io/zk-remit/')
 ap.add_argument('--voice', default='en-US-AndrewNeural')
 ap.add_argument('--no-voice', action='store_true')
 ap.add_argument('--out', default=str(ROOT / 'docs/zk-remit-explainer.mp4'))
+ap.add_argument('--slides-only', action='store_true', help='no screen recording: explain the flow with slides only (use when the app cannot be reached)')
 ap.add_argument('--keep', action='store_true', help='keep the work folder')
 args = ap.parse_args()
 
@@ -66,6 +67,8 @@ SLIDES = {
             "<div class=box><b>ZSWAP SHIELDED LEDGER</b>The money itself: receiveShielded in, sendShielded out</div>"
             "<div class=box><b>YOUR DEVICE (WITNESSES)</b>Holder secret, credential, escrow opening. Sealed at rest.</div></div>"
             "<p class=s>12 Compact circuits. A licensed issuer vouches once; only a commitment goes on chain.</p>",
+    'flow': "<div class=k>Send and claim</div><h2>Four steps, one private trail</h2><div class=row><div class=box><b>1 · PROOF</b>Device proves corridor rules and tier limit in zero knowledge</div><div class=box><b>2 · ESCROW</b>Shielded coin locked in the contract</div><div class=box><b>3 · CLAIM</b>Recipient opens a one-time link or QR</div><div class=box><b>4 · RECLAIM</b>No claim in time: sender takes it back</div></div><p class=s>Exact amount and identities never touch the public ledger.</p>",
+    'audit': "<div class=k>Selective disclosure</div><h2>One receipt, one auditor, nothing else</h2><div class=row><div class=box><b>PUBLIC ON THE LEDGER</b>Corridor<br>Amount band<br>Status and epoch</div><div class=box><b>SEALED</b>Sender identity<br>Exact amount<br>Recipient</div></div><p class=s>Corridor policies are enforced on chain, so operators keep no customer database.</p>",
     'proof': f"<div class=k>Live on Midnight Preview</div><h2>Deployed and verifiable</h2><div class=tiny>Contract</div><div class=mono>{ADDR}</div>"
              "<div class=grid><div><div class=n>46+46</div><span>contract and frontend tests</span></div><div><div class=n>33/33</div><span>guards caught by mutation check</span></div>"
              "<div><div class=n>96–100</div><span>Lighthouse (mobile)</span></div><div><div class=n>17</div><span>security findings, a test each</span></div></div>"
@@ -96,7 +99,7 @@ if args.no_voice:
     print('--no-voice: the result is SILENT and only for checking the layout.')
     for i, s in enumerate(SCENES):
         a = work / f'v{i}.wav'
-        run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', f'anullsrc=r=44100:cl=stereo', '-t', f'{words(s["voice"]) / 2.7:.2f}', str(a)])
+        run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', f'anullsrc=r=44100:cl=stereo', '-t', f'{words(s["voice"]) / 2.3:.2f}', str(a)])
         s['audio'] = a
 else:
     try:
@@ -144,60 +147,63 @@ with sync_playwright() as p:
             t0 = t1
 
     # ------------------------------------------------------------------ 3. record the real app (Simulator mode)
-    print(f'recording {args.base} …')
-    ctx = b.new_context(viewport={'width': W, 'height': H}, record_video_dir=str(work / 'rec'), record_video_size={'width': W, 'height': H})
-    pg = ctx.new_page()
-    t_start = time.monotonic()
-    marks, failed = {}, []
-    now = lambda: time.monotonic() - t_start
+    marks, failed, vpath = {}, [], None
+    if not args.slides_only:
+        print(f'recording {args.base} …')
+        ctx = b.new_context(viewport={'width': W, 'height': H}, record_video_dir=str(work / 'rec'), record_video_size={'width': W, 'height': H})
+        pg = ctx.new_page()
+        t_start = time.monotonic()
+        marks, failed = {}, []
+        now = lambda: time.monotonic() - t_start
 
-    def step(name, fn):
-        try:
-            fn()
-        except Exception as e:  # best effort: report and carry on
-            failed.append(f'{name}: {str(e).splitlines()[0][:110]}')
+        def step(name, fn):
+            try:
+                fn()
+            except Exception as e:  # best effort: report and carry on
+                failed.append(f'{name}: {str(e).splitlines()[0][:110]}')
 
-    def nav(label):
-        step(f'open {label}', lambda: pg.click(f'.nav-link:has-text("{label}")', timeout=8000))
+        def nav(label):
+            step(f'open {label}', lambda: pg.click(f'.nav-link:has-text("{label}")', timeout=8000))
 
-    pg.goto(args.base, wait_until='load')
-    step('home visible', lambda: pg.wait_for_selector('.home-hero', timeout=20000))
-    step('start app', lambda: pg.click('[data-boot-tab="send"]', timeout=8000))
-    step('app ready', lambda: pg.wait_for_selector('.send-layout', timeout=90000))
-    step('simulator mode', lambda: pg.click('.mode-toggle button:has-text("Simulator")', timeout=8000))
+        pg.goto(args.base, wait_until='load')
+        step('home visible', lambda: pg.wait_for_selector('.home-hero', timeout=20000))
+        step('start app', lambda: pg.click('[data-boot-tab="send"]', timeout=8000))
+        step('app ready', lambda: pg.wait_for_selector('.send-layout', timeout=90000))
+        step('simulator mode', lambda: pg.click('.mode-toggle button:has-text("Simulator")', timeout=8000))
 
-    marks['issuer'] = [now()]
-    nav('Issuer'); pg.wait_for_timeout(3500)
-    nav('Home')
-    step('start demo', lambda: pg.click('button:has-text("Start a demo transfer")', timeout=8000))
-    step('credential ready', lambda: pg.wait_for_selector('.send-cta:not([disabled])', timeout=240000))
-    marks['issuer'].append(now())
+        marks['issuer'] = [now()]
+        nav('Issuer'); pg.wait_for_timeout(3500)
+        nav('Home')
+        step('start demo', lambda: pg.click('button:has-text("Start a demo transfer")', timeout=8000))
+        step('credential ready', lambda: pg.wait_for_selector('.send-cta:not([disabled])', timeout=240000))
+        marks['issuer'].append(now())
 
-    marks['send'] = [now()]
-    nav('Send'); pg.wait_for_timeout(2500)
-    step('send', lambda: pg.click('.send-cta', timeout=8000))
-    pg.wait_for_timeout(4000)
-    marks['send'].append(now())
+        marks['send'] = [now()]
+        nav('Send'); pg.wait_for_timeout(2500)
+        step('send', lambda: pg.click('.send-cta', timeout=8000))
+        pg.wait_for_timeout(4000)
+        marks['send'].append(now())
 
-    marks['claim'] = [now()]
-    nav('Claim')
-    step('claim link', lambda: pg.wait_for_selector('img.qr', timeout=240000))
-    pg.wait_for_timeout(3500)
-    step('claim', lambda: pg.click('.claim-layout .btn.primary', timeout=4000))
-    pg.wait_for_timeout(4500)
-    marks['claim'].append(now())
+        marks['claim'] = [now()]
+        nav('Claim')
+        step('claim link', lambda: pg.wait_for_selector('img.qr', timeout=240000))
+        pg.wait_for_timeout(3500)
+        step('claim', lambda: pg.click('.claim-layout .btn.primary', timeout=4000))
+        pg.wait_for_timeout(4500)
+        marks['claim'].append(now())
 
-    marks['auditor'] = [now()]
-    nav('Auditor'); pg.wait_for_timeout(3500)
-    step('scroll', lambda: pg.mouse.wheel(0, 650))
-    pg.wait_for_timeout(3500)
-    marks['auditor'].append(now())
+        marks['auditor'] = [now()]
+        nav('Auditor'); pg.wait_for_timeout(3500)
+        step('scroll', lambda: pg.mouse.wheel(0, 650))
+        pg.wait_for_timeout(3500)
+        marks['auditor'].append(now())
 
-    vpath = pg.video.path()
-    ctx.close()
+        vpath = pg.video.path()
+        ctx.close()
     b.close()
 rec = work / 'rec.webm'
-shutil.move(vpath, rec)
+if vpath:
+    shutil.move(vpath, rec)
 print('recording steps that did not work (the clip still shows whatever was on screen):' if failed else 'all recording steps worked')
 for f in failed:
     print('  -', f)
@@ -210,6 +216,8 @@ PLAN = [
     [('clip', 'auditor', 1.0)],
     [('slide', 'proof', 1.0)],
 ]
+if args.slides_only:
+    PLAN[1:4] = [[('slide', 'arch', 1.0)], [('slide', 'flow', 1.0)], [('slide', 'audit', 1.0)]]
 ENC = ['-c:v', 'libx264', '-crf', '18', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-r', str(FPS), '-c:a', 'aac', '-b:a', '160k', '-ar', '44100', '-ac', '2']
 scene_files = []
 for i, (s, plan) in enumerate(zip(SCENES, PLAN)):
