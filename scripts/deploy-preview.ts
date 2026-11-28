@@ -42,17 +42,12 @@ import {
 import { LedgerTransaction } from '@midnight-ntwrk/midnight-js-types';
 import * as L from '@midnightntwrk/ledger-v9';
 import { planDeploy, pendingKeys, parseBlockLimits, PREVIEW_BLOCK_LIMITS, seedSteps, blockShare, type Cost } from './deploy-plan.js';
-import {
-  createLedger9MidnightProvider,
-  createLedger9WalletProvider,
-  type PrivateStateProvider,
-} from '@midnight-ntwrk/midnight-js-types';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/v9/compact-js';
-import { WalletFacade, WalletTransaction } from '@midnightntwrk/wallet-sdk';
-import { NETWORK_ID, env, say, die, readSeed, buildWallet, readyState, dustOf, reasonOf, type Built, type State } from './wallet.js';
+import type { WalletFacade } from '@midnightntwrk/wallet-sdk';
+import { NETWORK_ID, env, say, die, readSeed, buildWallet, readyState, dustOf, reasonOf, walletProviders, memoryPrivateState } from './wallet.js';
 
 import {
   Contract,
@@ -119,64 +114,6 @@ const waitForFunds = async (wallet: WalletFacade) => {
       );
     }
   }
-};
-
-const walletProviders = ({ wallet, keystore }: Built, state: State) => {
-  // Midnight.js calls the key getters synchronously, so they are read once from the settled state.
-  const coinPublicKey = state.shielded.coinPublicKey.toHexString();
-  const encryptionPublicKey = state.shielded.encryptionPublicKey.toHexString();
-  return {
-    walletProvider: createLedger9WalletProvider({
-      getCoinPublicKey: () => coinPublicKey as any,
-      getEncryptionPublicKey: () => encryptionPublicKey as any,
-      balanceTx: async (tx, ttl) => {
-        // The wallet runs its own copy of the ledger, so transactions cross as bytes.
-        const recipe = await wallet.balanceUnboundTransaction(wallet.adoptTransaction(tx.serialize(), 'Unbound'), {
-          ttl: ttl ?? new Date(Date.now() + 30 * 60_000),
-        });
-        const signed = await wallet.signRecipe(recipe, keystore.signDataAsync);
-        const finalized = await wallet.finalizeRecipe(signed);
-        return Buffer.from(WalletTransaction.toWire(finalized).transaction, 'hex');
-      },
-    }),
-    midnightProvider: createLedger9MidnightProvider(
-      (tx) => wallet.submitTransaction(wallet.adoptTransaction(tx.serialize(), 'Finalized')) as any,
-    ),
-  };
-};
-
-// ---------------------------------------------------------------- private state (in memory, deploy-time only)
-
-const memoryPrivateState = (): PrivateStateProvider<string, unknown> => {
-  const store = new Map<string, unknown>();
-  const keys = new Map<string, unknown>();
-  const forContract = (address: string) => ({
-    contractAddress: address,
-    set: async (k: string, v: unknown) => void store.set(`${address}:${k}`, v),
-    get: async (k: string) => store.get(`${address}:${k}`) ?? null,
-    remove: async (k: string) => void store.delete(`${address}:${k}`),
-    clear: async () => [...store.keys()].filter((k) => k.startsWith(`${address}:`)).forEach((k) => store.delete(k)),
-    exportPrivateStates: async () => {
-      throw new Error('export is not used by the deploy script');
-    },
-    importPrivateStates: async () => {
-      throw new Error('import is not used by the deploy script');
-    },
-  });
-  return {
-    forContract,
-    clearAll: async () => store.clear(),
-    setSigningKey: async (a: string, k: unknown) => void keys.set(a, k),
-    getSigningKey: async (a: string) => keys.get(a) ?? null,
-    removeSigningKey: async (a: string) => void keys.delete(a),
-    clearSigningKeys: async () => keys.clear(),
-    exportSigningKeys: async () => {
-      throw new Error('export is not used by the deploy script');
-    },
-    importSigningKeys: async () => {
-      throw new Error('import is not used by the deploy script');
-    },
-  } as unknown as PrivateStateProvider<string, unknown>;
 };
 
 // ---------------------------------------------------------------- main

@@ -8,6 +8,7 @@
     "deploy:preview": "tsx deploy-preview.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dust:register": "tsx dust-register.ts",
+    "e2e:preview": "tsx e2e-preview.ts",
     "test": "node --import tsx --test deploy-plan.test.ts"
   },
   "dependencies": {

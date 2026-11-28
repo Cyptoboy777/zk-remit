@@ -50,17 +50,18 @@ Recorded deploy transaction: 0cdd84e2a98028f3d50972140f9eb75f696ee2903225486bd78
 
 `ContractCall` is the latest action the indexer holds for this address, which is expected after the setup transactions above. The script exits non-zero if the contract is missing, and CI runs it on every push. The query asks the indexer for `contractAction(address)` on `https://indexer.preview.midnight.network/api/v4/graphql`; set `PREVIEW_INDEXER_URL` to use another indexer.
 
-## 3. End-to-end with Lace: shielded send and claim
+## 3. End-to-end on Preview: issue, send into shielded escrow, claim
 
-**Status: pending.** The transactions below are filled in from a real Lace run on Preview. We do not show hashes we have not produced.
+**Status: pending.** The transactions below are filled in from a real run on Preview by `npm run e2e:preview`. We do not show hashes we have not produced.
 
 | Step | What happens | Transaction hash |
 | --- | --- | --- |
 | Issue credential | Issuer attests the sender; only a commitment goes on chain | `PENDING_ISSUE_TX` |
+| Mint test funds (Preview only) | `mintTestSettlement` mints a shielded demo coin to the wallet | `PENDING_MINT_TX` |
 | Send (shielded escrow) | `sendRemittance` proves the rules and escrows a shielded coin with `receiveShielded` | `PENDING_SEND_TX` |
 | Claim | `claim` releases the coin to the recipient with `sendShielded` | `PENDING_CLAIM_TX` |
 
-How to reproduce it yourself: switch the app to **Midnight Preview**, connect Lace, press **Get test funds**, **Send**, then open the claim link in a second wallet. Steps and the tDUST workaround are in the [README](README.md#check-it-in-five-minutes).
+How to reproduce it yourself, with the UI: switch the app to **Midnight Preview**, connect Lace, press **Get test funds**, **Send**, then open the claim link in a second wallet (steps and the tDUST workaround are in the [README](README.md#check-it-in-five-minutes)). From the command line, the operator runs `npm run e2e:preview`, which needs the deployer wallet, a proof server and tDUST.
 
 ## 4. Tests and CI evidence
 

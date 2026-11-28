@@ -23,6 +23,7 @@
     "deploy:preview:all": "node scripts/deploy-all.mjs",
     "deploy:check": "node scripts/deploy-all.mjs --check-only",
     "deploy:fill-docs": "node scripts/fill-docs.mjs",
-    "dust:register": "npm run dust:register -w scripts --"
+    "dust:register": "npm run dust:register -w scripts --",
+    "e2e:preview": "npm run e2e:preview -w scripts --"
   }
 }

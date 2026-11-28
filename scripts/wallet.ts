@@ -12,8 +12,10 @@ import { mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
 import WebSocket from 'ws';
 import * as Rx from 'rxjs';
+import { createLedger9MidnightProvider, createLedger9WalletProvider, type PrivateStateProvider } from '@midnight-ntwrk/midnight-js-types';
 import {
   WalletFacade,
+  WalletTransaction,
   WalletSeeds,
   ShieldedWallet,
   UnshieldedWallet,
@@ -350,3 +352,63 @@ export const reasonOf = (e: unknown): string => {
   if (/Wallet\.Sync/.test(tag)) return `lost the indexer connection while syncing: ${msg}`;
   return tag && !msg.includes(tag) ? `${tag.split('/').pop()}: ${msg}` : msg;
 };
+
+/** Wallet and midnight providers for Midnight.js, backed by this wallet. */
+export const walletProviders = ({ wallet, keystore }: Built, state: State) => {
+  // Midnight.js calls the key getters synchronously, so they are read once from the settled state.
+  const coinPublicKey = state.shielded.coinPublicKey.toHexString();
+  const encryptionPublicKey = state.shielded.encryptionPublicKey.toHexString();
+  return {
+    walletProvider: createLedger9WalletProvider({
+      getCoinPublicKey: () => coinPublicKey as any,
+      getEncryptionPublicKey: () => encryptionPublicKey as any,
+      balanceTx: async (tx, ttl) => {
+        // The wallet runs its own copy of the ledger, so transactions cross as bytes.
+        const recipe = await wallet.balanceUnboundTransaction(wallet.adoptTransaction(tx.serialize(), 'Unbound'), {
+          ttl: ttl ?? new Date(Date.now() + 30 * 60_000),
+        });
+        const signed = await wallet.signRecipe(recipe, keystore.signDataAsync);
+        const finalized = await wallet.finalizeRecipe(signed);
+        return Buffer.from(WalletTransaction.toWire(finalized).transaction, 'hex');
+      },
+    }),
+    midnightProvider: createLedger9MidnightProvider(
+      (tx) => wallet.submitTransaction(wallet.adoptTransaction(tx.serialize(), 'Finalized')) as any,
+    ),
+  };
+};
+
+// Private state held in memory only (deploy and end-to-end scripts; nothing is written to disk).
+
+export const memoryPrivateState = (): PrivateStateProvider<string, unknown> => {
+  const store = new Map<string, unknown>();
+  const keys = new Map<string, unknown>();
+  const forContract = (address: string) => ({
+    contractAddress: address,
+    set: async (k: string, v: unknown) => void store.set(`${address}:${k}`, v),
+    get: async (k: string) => store.get(`${address}:${k}`) ?? null,
+    remove: async (k: string) => void store.delete(`${address}:${k}`),
+    clear: async () => [...store.keys()].filter((k) => k.startsWith(`${address}:`)).forEach((k) => store.delete(k)),
+    exportPrivateStates: async () => {
+      throw new Error('export is not used by the deploy script');
+    },
+    importPrivateStates: async () => {
+      throw new Error('import is not used by the deploy script');
+    },
+  });
+  return {
+    forContract,
+    clearAll: async () => store.clear(),
+    setSigningKey: async (a: string, k: unknown) => void keys.set(a, k),
+    getSigningKey: async (a: string) => keys.get(a) ?? null,
+    removeSigningKey: async (a: string) => void keys.delete(a),
+    clearSigningKeys: async () => keys.clear(),
+    exportSigningKeys: async () => {
+      throw new Error('export is not used by the deploy script');
+    },
+    importSigningKeys: async () => {
+      throw new Error('import is not used by the deploy script');
+    },
+  } as unknown as PrivateStateProvider<string, unknown>;
+};
+
