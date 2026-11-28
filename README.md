@@ -242,6 +242,7 @@ npm run dev -w frontend
 
 - **Deploy to Preview** (operator laptop only): [`docs/DEPLOY_PREVIEW.md`](docs/DEPLOY_PREVIEW.md). `npm run deploy:preview:all` checks the toolchain, proof server and tDUST, deploys, seeds a demo issuer, 7 corridors and test funds, then fills the Deployment table above. Wallet phrases live in an untracked `.env` and are never printed.
 - **End-to-end from the command line** (operator laptop, no Lace needed): `npm run e2e:preview` issues a credential, mints test funds, sends into shielded escrow and claims, then writes the real transaction hashes into [PROOF.md](PROOF.md).
+- **Rebuild the explainer video** (voice-over from edge-tts, real screen recordings of the app, captions; all open source): `pip install edge-tts playwright` then `python3 scripts/build-video.py`. Needs ffmpeg and network access.
 - **Host the frontend:** GitHub Pages is built by CI; `vercel.json` also holds a complete Vercel setup with the CSP headers.
 - **Operator flow in the app:** Issuer tab, paste operator keys (kept in this browser only), then **Issue my credential**.
 
