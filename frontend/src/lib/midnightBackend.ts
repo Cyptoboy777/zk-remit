@@ -37,17 +37,32 @@ type EscrowOpening = { coin: ShieldedCoin & { mt_index: bigint }; salt: Uint8Arr
 
 // ---------------------------------------------------------------- Lace detection / connection
 
-export const detectLace = (): InitialAPI | undefined => {
+type Found = { api: InitialAPI; supported: boolean };
+
+/** Every wallet the page can see under `window.midnight` that exposes a connect function. */
+const wallets = (): InitialAPI[] => {
   const m = (window as unknown as { midnight?: Record<string, InitialAPI> }).midnight;
-  if (!m) return undefined;
-  return Object.values(m).find(
-    (w) => !!w && typeof w === 'object' && 'apiVersion' in w && semver.satisfies(w.apiVersion, '4.x'),
-  );
+  if (!m || typeof m !== 'object') return [];
+  return Object.values(m).filter((w) => !!w && typeof w === 'object' && typeof (w as InitialAPI).connect === 'function');
 };
 
-/** Extensions inject `window.midnight` a moment after load, so poll briefly before giving up. */
-const waitForLace = async (): Promise<InitialAPI | undefined> => {
-  for (let i = 0; i < 30; i++) {
+/** Major version of the wallet's connector API; tolerates pre-release tags like 4.1.0-rc.1. */
+const connectorMajor = (w: InitialAPI): number | undefined => {
+  const v = semver.coerce(String((w as { apiVersion?: unknown }).apiVersion ?? ''));
+  return v ? v.major : undefined;
+};
+
+/** Prefers a wallet speaking connector 4.x; reports whether one was found. */
+export const detectLace = (): Found | undefined => {
+  const all = wallets();
+  if (all.length === 0) return undefined;
+  const ok = all.find((w) => connectorMajor(w) === 4);
+  return ok ? { api: ok, supported: true } : { api: all[0], supported: false };
+};
+
+/** Extensions inject `window.midnight` a moment after load, so poll for a few seconds before giving up. */
+const waitForLace = async (): Promise<Found | undefined> => {
+  for (let i = 0; i < 50; i++) {
     const found = detectLace();
     if (found) return found;
     await new Promise((r) => setTimeout(r, 100));
@@ -79,8 +94,10 @@ export class MidnightBackend implements Backend {
   /** Connects Lace, checks network and fees, and joins the deployed contract. Throws MidnightProblem. */
   static async connect(deployment: Deployment, onStage?: (s: Stage) => void): Promise<MidnightBackend> {
     onStage?.('connecting');
-    const initial = await waitForLace();
-    if (!initial) throw new MidnightProblem('lace-missing');
+    const found = await waitForLace();
+    if (!found) throw new MidnightProblem('lace-missing');
+    if (!found.supported) throw new MidnightProblem('lace-incompatible');
+    const initial = found.api;
 
     let api: ConnectedAPI;
     try {

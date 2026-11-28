@@ -4,6 +4,7 @@
  */
 export type Problem =
   | 'lace-missing'
+  | 'lace-incompatible'
   | 'wrong-network'
   | 'no-dust'
   | 'no-settlement'
@@ -34,7 +35,11 @@ export type Friendly = { problem: Problem; title: string; body: string };
 const COPY: Record<Exclude<Problem, 'contract'>, { title: string; body: string }> = {
   'lace-missing': {
     title: 'Lace wallet not found',
-    body: 'Install the Lace wallet extension, enable Midnight in it, then reload this page. You can keep exploring in Simulator mode meanwhile.',
+    body: 'Install the Lace wallet extension, enable Midnight in it, then reload this page. Use desktop Chrome, Brave or Edge, and allow the extension to run on this site. You can keep exploring in Simulator mode meanwhile.',
+  },
+  'lace-incompatible': {
+    title: 'Update Lace to connect',
+    body: 'A Midnight wallet was found, but it speaks an older or newer connector version than this app supports. Update Lace to the latest release, reload this page and try again. Simulator mode still works meanwhile.',
   },
   'wrong-network': {
     title: 'Switch Lace to Midnight Preview',

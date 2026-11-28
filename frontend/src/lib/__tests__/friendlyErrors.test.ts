@@ -63,3 +63,10 @@ describe('friendly errors', () => {
     expect(friendlyError({ weird: true }).problem).toBe('unknown');
   });
 });
+
+describe('wallet detection copy', () => {
+  it('explains an unsupported Lace connector separately from a missing wallet', () => {
+    expect(friendlyError(new MidnightProblem('lace-incompatible')).title).toMatch(/Update Lace/);
+    expect(friendlyError(new MidnightProblem('lace-missing')).body).toMatch(/Chrome, Brave or Edge/);
+  });
+});
